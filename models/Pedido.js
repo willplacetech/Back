@@ -9,9 +9,9 @@ const PedidoSchema = new mongoose.Schema({
   }],
   total: Number,
   dadosCliente: {
-    nome: String,
-    telefone: String,
-    endereco: String
+    nome: { type: String, default: 'Nome não informado' }, // ✅ Sem required, tem valor padrão
+    telefone: { type: String, default: '' },
+    endereco: { type: String, default: '' }
   },
   status: { type: String, default: 'pendente' },
   criadoEm: { type: Date, default: Date.now }
