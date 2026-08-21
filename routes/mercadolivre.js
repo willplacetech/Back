@@ -1,7 +1,35 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
+const dns = require('dns').promises;
+const net = require('net');
 const Produto = require('../models/Produto');
+const { requireAuth } = require('../middleware/auth');
+
+function ipPrivado(ip) {
+  if (net.isIPv4(ip)) {
+    const partes = ip.split('.').map(Number);
+    return partes[0] === 10 || partes[0] === 127 ||
+      (partes[0] === 172 && partes[1] >= 16 && partes[1] <= 31) ||
+      (partes[0] === 192 && partes[1] === 168) ||
+      partes[0] === 0;
+  }
+  return net.isIPv6(ip) && (ip === '::1' || ip.startsWith('fc') || ip.startsWith('fd') || ip.startsWith('fe80:'));
+}
+
+async function validarUrlPublica(valor) {
+  try {
+    const destino = new URL(valor);
+    if (!['http:', 'https:'].includes(destino.protocol)) return null;
+    if (destino.username || destino.password) return null;
+    if (ipPrivado(destino.hostname)) return null;
+    const enderecos = await dns.lookup(destino.hostname, { all: true });
+    if (enderecos.some(({ address }) => ipPrivado(address))) return null;
+    return destino;
+  } catch {
+    return null;
+  }
+}
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
@@ -24,21 +52,23 @@ router.get('/buscar', async (req, res) => {
 router.post('/extrair-link', async (req, res) => {
   try {
     const { url } = req.body;
-    if (!url || !url.startsWith('http')) {
+    const destino = await validarUrlPublica(url);
+    if (!destino) {
       return res.status(400).json({ error: '❌ Cole um link válido (começa com http:// ou https://)' });
     }
 
-    console.log(`\n🔗 Extraindo dados de: ${url}`);
+    const urlSegura = destino.toString();
+    console.log(`\n🔗 Extraindo dados de: ${urlSegura}`);
 
     // MÉTODO 1: Tentar extrair DIRETO da página
     try {
-      const resp = await axios.get(url, { 
+      const resp = await axios.get(urlSegura, {
         headers: HEADERS, 
         timeout: 20000,
         maxRedirects: 5
       });
       
-      const dados = extrairDoHTML(resp.data, url);
+      const dados = extrairDoHTML(resp.data, urlSegura);
       if (dados && dados.nome && dados.nome !== 'Produto') {
         console.log('✅ Método 1 (direto) funcionou!');
         return res.json(dados);
@@ -49,9 +79,9 @@ router.post('/extrair-link', async (req, res) => {
 
     // MÉTODO 2: Usar proxy público AllOrigins
     try {
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(urlSegura)}`;
       const resp = await axios.get(proxyUrl, { headers: HEADERS, timeout: 25000 });
-      const dados = extrairDoHTML(resp.data, url);
+      const dados = extrairDoHTML(resp.data, urlSegura);
       if (dados && dados.nome && dados.nome !== 'Produto') {
         console.log('✅ Método 2 (proxy AllOrigins) funcionou!');
         return res.json(dados);
@@ -62,7 +92,7 @@ router.post('/extrair-link', async (req, res) => {
 
     // MÉTODO 3: Usar API pública de Open Graph (último recurso)
     try {
-      const ogUrl = `https://opengraph.io/api/1.1/site/${encodeURIComponent(url)}`;
+      const ogUrl = `https://opengraph.io/api/1.1/site/${encodeURIComponent(urlSegura)}`;
       const resp = await axios.get(ogUrl, { timeout: 20000 });
       const og = resp.data?.hybridGraph || resp.data?.openGraph || {};
       if (og.title || og.image) {
@@ -72,7 +102,7 @@ router.post('/extrair-link', async (req, res) => {
           preco: 0,
           imagem: (og.image || '').replace('http://', 'https://'),
           galeria: [(og.image || '').replace('http://', 'https://')].filter(Boolean),
-          linkML: url,
+          linkML: urlSegura,
           descricao: og.description || ''
         };
         console.log('✅ Método 3 (opengraph.io) funcionou!');
@@ -90,7 +120,7 @@ router.post('/extrair-link', async (req, res) => {
       preco: 0,
       imagem: '',
       galeria: [],
-      linkML: url,
+      linkML: urlSegura,
       descricao: ''
     });
 
@@ -112,7 +142,7 @@ router.get('/descricao/:id', (req, res) => {
 // ==========================================
 // 💾 SALVAR NO BANCO (IGUAL ANTES)
 // ==========================================
-router.post('/importar', async (req, res) => {
+router.post('/importar', requireAuth, async (req, res) => {
   try {
     const { mlId, nome, preco, imagem, galeria, linkML, categoria, descricao } = req.body;
     

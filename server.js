@@ -8,6 +8,7 @@ const cors = require('cors');
 const produtoRoutes = require('./routes/produtos');
 const pedidoRoutes = require('./routes/pedidos');
 const mlRoutes = require('./routes/mercadolivre');
+const authRoutes = require('./routes/auth');
 
 const app = express();
 
@@ -20,10 +21,11 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json());       // ✅ LÊ JSON DO FRONTEND — MAIS IMPORTANTE
+app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // 🛣️ Rotas da API
+app.use('/api/auth', authRoutes);
 app.use('/api/produtos', produtoRoutes);
 app.use('/api/pedidos', pedidoRoutes);
 app.use('/api/ml', mlRoutes);

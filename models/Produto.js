@@ -4,19 +4,24 @@ const mongoose = require('mongoose');
 const ProdutoSchema = new mongoose.Schema({
   nome: {
     type: String,
-    required: true
+    required: true,
+    trim: true,
+    maxlength: 180
   },
   descricao: {
     type: String,
-    default: ''
+    default: '',
+    maxlength: 600
   },
   preco: {
     type: Number,
-    required: true
+    required: true,
+    min: 0.01
   },
   precoPersonalizado: {
     type: Number,
-    default: null
+    default: null,
+    min: 0.01
   },
   categoria: {
     type: String,
@@ -25,6 +30,19 @@ const ProdutoSchema = new mongoose.Schema({
   imagem: {
     type: String,
     default: ''
+  },
+  galeria: {
+    type: [String],
+    default: []
+  },
+  linkML: {
+    type: String,
+    default: ''
+  },
+  mlId: {
+    type: String,
+    sparse: true,
+    unique: true
   },
   disponivel: {
     type: Boolean,

@@ -2,18 +2,19 @@ const mongoose = require('mongoose');
 
 const PedidoSchema = new mongoose.Schema({
   itens: [{
+    produtoId: { type: mongoose.Schema.Types.ObjectId, ref: 'Produto', required: true },
     nome: String,
-    preco: Number,
-    quantidade: Number,
+    preco: { type: Number, required: true, min: 0.01 },
+    quantidade: { type: Number, required: true, min: 1, validate: Number.isInteger },
     imagem: String
   }],
-  total: Number,
+  total: { type: Number, required: true, min: 0.01 },
   dadosCliente: {
-    nome: { type: String, default: 'Nome não informado' }, // ✅ Sem required, tem valor padrão
-    telefone: { type: String, default: '' },
+    nome: { type: String, required: true, trim: true, maxlength: 120 },
+    telefone: { type: String, required: true, trim: true, maxlength: 25 },
     endereco: { type: String, default: '' }
   },
-  status: { type: String, default: 'pendente' },
+  status: { type: String, enum: ['pendente', 'confirmado', 'entregue', 'cancelado'], default: 'pendente' },
   criadoEm: { type: Date, default: Date.now }
 });
 

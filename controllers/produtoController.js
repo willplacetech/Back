@@ -4,15 +4,23 @@ const Produto = require('../models/Produto');
 exports.criar = async (req, res) => {
   try {
     const body = req.body;
-    if (!body.nome || !body.nome.trim()) {
+    const preco = Number(body.preco);
+    const precoPersonalizado = body.precoPersonalizado === undefined || body.precoPersonalizado === ''
+      ? undefined
+      : Number(body.precoPersonalizado);
+
+    if (!body.nome || !body.nome.trim() || !Number.isFinite(preco) || preco <= 0) {
       return res.status(400).json({ sucesso: false, error: 'Nome do produto é obrigatório!' });
+    }
+    if (precoPersonalizado !== undefined && (!Number.isFinite(precoPersonalizado) || precoPersonalizado <= 0)) {
+      return res.status(400).json({ sucesso: false, error: 'Preço personalizado inválido' });
     }
 
     const produto = await Produto.create({
       nome: body.nome.trim(),
       descricao: body.descricao || '',
-      preco: Number(body.preco) || 0,
-      precoPersonalizado: body.precoPersonalizado ? Number(body.precoPersonalizado) : undefined,
+      preco,
+      precoPersonalizado,
       categoria: body.categoria || '',
       imagem: body.imagem || '',
       disponivel: body.disponivel !== undefined ? body.disponivel : true
@@ -77,11 +85,28 @@ exports.atualizar = async (req, res) => {
     const body = req.body;
     const dadosAtualizar = {};
 
-    if (body.nome) dadosAtualizar.nome = body.nome.trim();
+    if (body.nome !== undefined) {
+      if (!body.nome.trim()) return res.status(400).json({ sucesso: false, error: 'Nome inválido' });
+      dadosAtualizar.nome = body.nome.trim();
+    }
     if (body.descricao !== undefined) dadosAtualizar.descricao = body.descricao;
-    if (body.preco) dadosAtualizar.preco = Number(body.preco);
+    if (body.preco !== undefined) {
+      const preco = Number(body.preco);
+      if (!Number.isFinite(preco) || preco <= 0) {
+        return res.status(400).json({ sucesso: false, error: 'Preço inválido' });
+      }
+      dadosAtualizar.preco = preco;
+    }
     if (body.precoPersonalizado !== undefined) {
-      dadosAtualizar.precoPersonalizado = body.precoPersonalizado ? Number(body.precoPersonalizado) : undefined;
+      if (body.precoPersonalizado === '' || body.precoPersonalizado === null) {
+        dadosAtualizar.$unset = { precoPersonalizado: 1 };
+      } else {
+        const precoPersonalizado = Number(body.precoPersonalizado);
+        if (!Number.isFinite(precoPersonalizado) || precoPersonalizado <= 0) {
+          return res.status(400).json({ sucesso: false, error: 'Preço personalizado inválido' });
+        }
+        dadosAtualizar.precoPersonalizado = precoPersonalizado;
+      }
     }
     if (body.categoria !== undefined) dadosAtualizar.categoria = body.categoria;
     if (body.imagem !== undefined) dadosAtualizar.imagem = body.imagem;
@@ -117,5 +142,18 @@ exports.excluir = async (req, res) => {
   } catch (err) {
     console.error("❌ Erro ao excluir produto:", err);
     res.status(500).json({ sucesso: false, error: err.message });
+  }
+};
+
+exports.relatorio = async (req, res) => {
+  try {
+    const [totalProdutos, disponiveis, importadosML] = await Promise.all([
+      Produto.countDocuments(),
+      Produto.countDocuments({ disponivel: true }),
+      Produto.countDocuments({ mlId: { $exists: true, $ne: '' } })
+    ]);
+    return res.json({ totalProdutos, disponiveis, indisponiveis: totalProdutos - disponiveis, importadosML });
+  } catch (err) {
+    return res.status(500).json({ error: 'Erro ao gerar relatório' });
   }
 };
