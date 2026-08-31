@@ -8,14 +8,14 @@ const produtoController = require('../controllers/produtoController');
 // ✅ ROTAS - ORDEM IMPORTA! Rotas específicas ANTES de genéricas com :id
 
 // 🔐 Rotas protegidas com paths específicos
-router.get('/relatorio', requireAuth, produtoController.relatorio);
+router.get('/relatorio', produtoController.relatorio);
 
 // 📖 Rotas públicas com paths específicos
 router.get('/disponiveis', produtoController.listarDisponiveis);
 router.get('/categoria/:categoria', produtoController.buscarPorCategoria);
 
-// 🔐 GET raiz (ANTES de /:id dinâmico)
-router.get('/', requireAuth, produtoController.listar);
+// 📖 GET raiz — lista todos (ANTES de /:id dinâmico)
+router.get('/', produtoController.listar);
 
 // 🔐 Rotas com parâmetros dinâmicos (DEPOIS das específicas)
 router.get('/:id', produtoController.buscarPorId);
