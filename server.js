@@ -17,7 +17,11 @@ mongoose.set('strictQuery', true);
 
 // 🛡️ Middlewares — SEMPRE ANTES DAS ROTAS
 app.use(cors({
-  origin: ['http://localhost:5173', 'https://placetechcatalogo.netlify.app'],
+  origin: [
+    'http://localhost:5173',
+    'https://placetechcatalogo.netlify.app',
+    'https://front-eazr.onrender.com'
+  ],
   credentials: true
 }));
 app.use(express.json({ limit: '2mb' })); // ✅ Aumentado para listas grandes
