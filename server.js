@@ -38,8 +38,7 @@ const CONFIG = {
   MAX_TENTATIVAS: 2,         // 🔄 2 tentativas por lote
   TEMPERATURA: 0.05,         // 🔥 Baixa = mais preciso
   MAX_TOKENS: 4096,          // 📏 Limite de tokens de saída
-  MODELO: 'llama-3.1-70b-versatile' // 🧠 Modelo recomendado (70B = inteligente)
-  // Alternativa mais rápida: 'llama-3.1-8b-instant'
+  MODELO: 'llama-3.1-8b-instant' // 🤖 Modelo Groq
 };
 
 // ✅ DIVIDE EM LOTES PRESERVANDO CATEGORIAS
