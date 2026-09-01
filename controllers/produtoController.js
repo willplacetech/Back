@@ -157,3 +157,73 @@ exports.relatorio = async (req, res) => {
     return res.status(500).json({ error: 'Erro ao gerar relatório' });
   }
 };
+
+// ✅ IMPORTAR PRODUTOS EM LOTE
+exports.importarLote = async (req, res) => {
+  try {
+    const { produtos } = req.body;
+
+    if (!Array.isArray(produtos) || produtos.length === 0) {
+      return res.status(400).json({ sucesso: false, error: 'Array de produtos é obrigatório' });
+    }
+
+    const resultados = {
+      sucesso: [],
+      erros: [],
+      total: produtos.length
+    };
+
+    // Processa cada produto
+    for (let i = 0; i < produtos.length; i++) {
+      try {
+        const p = produtos[i];
+        const preco = Number(p.preco);
+        const precoPersonalizado = p.precoPersonalizado ? Number(p.precoPersonalizado) : undefined;
+
+        // Validações
+        if (!p.nome || !p.nome.trim() || !Number.isFinite(preco) || preco <= 0) {
+          resultados.erros.push({
+            indice: i,
+            nome: p.nome || 'Sem nome',
+            erro: 'Nome e preço são obrigatórios'
+          });
+          continue;
+        }
+
+        // Cria o produto
+        const produto = await Produto.create({
+          nome: p.nome.trim(),
+          descricao: p.descricao || '',
+          preco,
+          precoPersonalizado,
+          categoria: p.categoria || 'Importado',
+          imagem: p.imagem || '',
+          disponivel: p.disponivel !== false
+        });
+
+        resultados.sucesso.push({
+          indice: i,
+          nome: produto.nome,
+          id: produto._id
+        });
+
+      } catch (err) {
+        resultados.erros.push({
+          indice: i,
+          nome: produtos[i].nome || 'Sem nome',
+          erro: err.message
+        });
+      }
+    }
+
+    res.status(201).json({
+      sucesso: resultados.erros.length === 0,
+      resultados,
+      resumo: `${resultados.sucesso.length}/${resultados.total} produtos importados com sucesso`
+    });
+
+  } catch (err) {
+    console.error("❌ Erro ao importar lote:", err);
+    res.status(400).json({ sucesso: false, error: err.message });
+  }
+};
