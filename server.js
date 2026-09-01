@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk'); // ✅ Groq no lugar do Gemini
 
 // 📥 Importa rotas e modelos
 const produtoRoutes = require('./routes/produtos');
@@ -13,7 +13,7 @@ const SessaoProcessamento = require('./models/SessaoProcessamento');
 
 const app = express();
 
-// ⚙️ Configurações
+// ⚙️ Configurações do Mongoose
 mongoose.set('strictQuery', true);
 
 // 🛡️ Middlewares
@@ -28,19 +28,21 @@ app.use(cors({
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// 🤖 Inicializa Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// 🤖 Inicializa GROQ
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ✅ CONFIGURAÇÕES
+// ✅ CONFIGURAÇÕES DE PROCESSAMENTO
 const CONFIG = {
-  TAMANHO_LOTE: 15,
-  TIMEOUT_POR_LOTE: 60000,
-  MAX_TENTATIVAS: 2,
-  TEMPERATURA: 0.05,
-  MAX_TOKENS: 4096
+  TAMANHO_LOTE: 15,          // 📦 15 linhas por lote (econômico e rápido)
+  TIMEOUT_POR_LOTE: 60000,   // ⏱️ 60 segundos por lote
+  MAX_TENTATIVAS: 2,         // 🔄 2 tentativas por lote
+  TEMPERATURA: 0.05,         // 🔥 Baixa = mais preciso
+  MAX_TOKENS: 4096,          // 📏 Limite de tokens de saída
+  MODELO: 'llama-3.1-70b-versatile' // 🧠 Modelo recomendado (70B = inteligente)
+  // Alternativa mais rápida: 'llama-3.1-8b-instant'
 };
 
-// ✅ DIVIDE EM LOTES
+// ✅ DIVIDE EM LOTES PRESERVANDO CATEGORIAS
 function dividirListaEmLotes(texto) {
   const linhas = texto.split('\n').filter(l => l.trim().length > 0);
   const lotes = [];
@@ -66,37 +68,40 @@ function dividirListaEmLotes(texto) {
   return lotes.length ? lotes : [{ conteudo: texto, categoriaContexto: '' }];
 }
 
-// ✅ PROCESSA UM LOTE INDIVIDUAL
-async function processarUmLote(model, loteTexto, contexto) {
+// ✅ PROCESSA UM LOTE COM GROQ
+async function processarUmLote(loteTexto, contexto) {
   const prompt = `
-Categoria: ${contexto || 'Geral'}
-Extraia produtos desta lista e retorne SOMENTE JSON:
-{"categorias":[{"nomeCategoria":"NOME","produtos":[{"nome":"","cor":"","capacidade":"","preco":"R$","imagemUrl":"","descricao":""}]}]}
-Lista:
+Categoria atual: ${contexto || 'Geral'}
+
+Você é um processador de produtos. Extraia TODOS os produtos da lista abaixo.
+REGRAS OBRIGATÓRIAS:
+1. Retorne SOMENTE JSON válido, sem explicações, sem texto adicional
+2. Siga EXATAMENTE este formato:
+{"categorias":[{"nomeCategoria":"NOME DA CATEGORIA","produtos":[{"nome":"nome completo","cor":"cor","capacidade":"ex: 256GB","preco":"R$ X.XXX,XX","imagemUrl":"link de busca do produto","descricao":"especificações técnicas"}]}]}
+
+Lista de produtos:
 ${loteTexto}
 `;
 
-  const resultado = await Promise.race([
-    model.generateContent(prompt),
-    new Promise((_, rejeita) =>
-      setTimeout(() => rejeita(new Error('Timeout')), CONFIG.TIMEOUT_POR_LOTE)
-    )
-  ]);
+  const chatCompletion = await groq.chat.completions.create({
+    messages: [
+      {
+        role: 'system',
+        content: 'Você extrai dados de listas de produtos e retorna APENAS JSON válido. Nunca adicione textos ou explicações fora do JSON.'
+      },
+      { role: 'user', content: prompt }
+    ],
+    model: CONFIG.MODELO,
+    temperature: CONFIG.TEMPERATURA,
+    response_format: { type: 'json_object' },
+    max_tokens: CONFIG.MAX_TOKENS
+  });
 
-  let texto = resultado.response.text()
-    .replace(/```json\s*/gi, '')
-    .replace(/```\s*/g, '')
-    .trim();
-
-  try {
-    return JSON.parse(texto);
-  } catch {
-    if (!texto.endsWith('}')) texto = texto.replace(/,\s*$/, '') + '}]}';
-    return JSON.parse(texto);
-  }
+  const textoResposta = chatCompletion.choices[0]?.message?.content?.trim() || '{}';
+  return JSON.parse(textoResposta);
 }
 
-// ✅ JUNTA PRODUTOS DE VÁRIAS CATEGORIAS
+// ✅ EXTRAI PRODUTOS DO JSON
 function extrairProdutos(dadosLote) {
   const produtos = [];
   for (const cat of dadosLote.categorias || []) {
@@ -107,7 +112,7 @@ function extrairProdutos(dadosLote) {
   return produtos;
 }
 
-// 🔌 ROTA 1: INICIAR NOVA SESSÃO DE PROCESSAMENTO
+// 🔌 ROTA 1: INICIAR NOVA SESSÃO
 app.post('/api/produtos/processar-iniciar', async (req, res) => {
   try {
     const { listaBruta } = req.body;
@@ -116,8 +121,6 @@ app.post('/api/produtos/processar-iniciar', async (req, res) => {
     }
 
     const lotesDados = dividirListaEmLotes(listaBruta);
-    
-    // Cria sessão no banco
     const sessao = await SessaoProcessamento.create({
       status: 'iniciada',
       listaBruta,
@@ -127,13 +130,8 @@ app.post('/api/produtos/processar-iniciar', async (req, res) => {
       atualizadaEm: Date.now()
     });
 
-    console.log(`🆕 Sessão ${sessao._id} criada com ${lotesDados.length} lotes`);
-
-    res.json({
-      sucesso: true,
-      sessaoId: sessao._id,
-      totalLotes: lotesDados.length
-    });
+    console.log(`🆕 Sessão ${sessao._id} criada com ${lotesDados.length} lotes | Modelo: ${CONFIG.MODELO}`);
+    res.json({ sucesso: true, sessaoId: sessao._id, totalLotes: lotesDados.length });
 
   } catch (erro) {
     console.error('❌ Erro ao criar sessão:', erro);
@@ -141,25 +139,23 @@ app.post('/api/produtos/processar-iniciar', async (req, res) => {
   }
 });
 
-// 🔌 ROTA 2: PROCESSAR PRÓXIMO LOTE PENDENTE
+// 🔌 ROTA 2: PROCESSAR PRÓXIMO LOTE
 app.post('/api/produtos/processar-proximo/:sessaoId', async (req, res) => {
   try {
     const { sessaoId } = req.params;
     let sessao = await SessaoProcessamento.findById(sessaoId);
-    
+
     if (!sessao) {
       return res.status(404).json({ sucesso: false, erro: 'Sessão não encontrada' });
     }
 
-    // Encontra próximo lote pendente
     const loteIndex = sessao.lotes.findIndex(l => l.status === 'pendente');
-    
+
     if (loteIndex === -1) {
-      // Todos processados!
       sessao.status = sessao.lotes.some(l => l.status === 'falhou') ? 'parcial' : 'concluida';
       sessao.atualizadaEm = Date.now();
       await sessao.save();
-      
+
       return res.json({
         sucesso: true,
         concluido: true,
@@ -178,7 +174,6 @@ app.post('/api/produtos/processar-proximo/:sessaoId', async (req, res) => {
     const lotesDados = dividirListaEmLotes(sessao.listaBruta);
     const dadosLote = lotesDados[loteIndex];
 
-    // Marca como processando
     lote.status = 'processando';
     lote.iniciadoEm = Date.now();
     lote.tentativas += 1;
@@ -186,22 +181,12 @@ app.post('/api/produtos/processar-proximo/:sessaoId', async (req, res) => {
     sessao.atualizadaEm = Date.now();
     await sessao.save();
 
-    console.log(`🔄 Sessão ${sessaoId} | Lote ${loteIndex + 1}/${sessao.totalLotes}`);
-
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3.6-flash',
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: CONFIG.TEMPERATURA,
-        maxOutputTokens: CONFIG.MAX_TOKENS
-      }
-    });
+    console.log(`🔄 Sessão ${sessaoId} | Lote ${loteIndex + 1}/${sessao.totalLotes} | Tentativa ${lote.tentativas}`);
 
     try {
-      const resultado = await processarUmLote(model, dadosLote.conteudo, dadosLote.categoriaContexto);
+      const resultado = await processarUmLote(dadosLote.conteudo, dadosLote.categoriaContexto);
       const produtosNovos = extrairProdutos(resultado);
 
-      // Salva lote como concluído
       lote.status = 'concluido';
       lote.concluidoEm = Date.now();
       lote.produtos = produtosNovos;
@@ -210,15 +195,10 @@ app.post('/api/produtos/processar-proximo/:sessaoId', async (req, res) => {
       sessao.produtos.push(...produtosNovos);
       sessao.atualizadaEm = Date.now();
 
-      // Verifica se acabou
       const temPendentes = sessao.lotes.some(l => l.status === 'pendente');
       const temFalhos = sessao.lotes.some(l => l.status === 'falhou');
-      
-      if (!temPendentes && !temFalhos) {
-        sessao.status = 'concluida';
-      } else if (!temPendentes && temFalhos) {
-        sessao.status = 'parcial';
-      }
+      if (!temPendentes && !temFalhos) sessao.status = 'concluida';
+      else if (!temPendentes && temFalhos) sessao.status = 'parcial';
 
       await sessao.save();
 
@@ -241,28 +221,23 @@ app.post('/api/produtos/processar-proximo/:sessaoId', async (req, res) => {
     } catch (erroLote) {
       lote.status = lote.tentativas >= CONFIG.MAX_TENTATIVAS ? 'falhou' : 'pendente';
       lote.erro = erroLote.message;
-      
+
       if (lote.status === 'falhou') {
         sessao.lotesFalhos += 1;
       }
-      
+
       sessao.atualizadaEm = Date.now();
-      
       const temPendentes = sessao.lotes.some(l => l.status === 'pendente');
       const temFalhos = sessao.lotes.some(l => l.status === 'falhou');
-      
-      if (!temPendentes && !temFalhos) {
-        sessao.status = 'concluida';
-      } else if (!temPendentes && temFalhos) {
-        sessao.status = 'parcial';
-      }
+      if (!temPendentes && !temFalhos) sessao.status = 'concluida';
+      else if (!temPendentes && temFalhos) sessao.status = 'parcial';
 
       await sessao.save();
 
       console.log(`❌ Lote ${loteIndex + 1} FALHOU: ${erroLote.message} | Tentativa ${lote.tentativas}/${CONFIG.MAX_TENTATIVAS}`);
 
       res.json({
-        sucesso: lote.status === 'pendente', // Se vai tentar de novo, ainda é sucesso
+        sucesso: lote.status === 'pendente',
         concluido: false,
         loteProcessado: loteIndex + 1,
         tentouNovamente: lote.status === 'pendente',
@@ -303,10 +278,7 @@ app.get('/api/produtos/processar-status/:sessaoId', async (req, res) => {
         criadaEm: sessao.criadaEm,
         atualizadaEm: sessao.atualizadaEm,
         lotes: sessao.lotes.map(l => ({
-          indice: l.indice,
-          status: l.status,
-          tentativas: l.tentativas,
-          erro: l.erro
+          indice: l.indice, status: l.status, tentativas: l.tentativas, erro: l.erro
         }))
       },
       produtos: sessao.produtos
@@ -325,7 +297,6 @@ app.post('/api/produtos/processar-retentar/:sessaoId', async (req, res) => {
       return res.status(404).json({ sucesso: false, erro: 'Sessão não encontrada' });
     }
 
-    // Volta lotes falhos para pendente
     let retentados = 0;
     sessao.lotes.forEach(l => {
       if (l.status === 'falhou') {
@@ -340,6 +311,8 @@ app.post('/api/produtos/processar-retentar/:sessaoId', async (req, res) => {
     sessao.atualizadaEm = Date.now();
     await sessao.save();
 
+    console.log(`🔁 Sessão ${sessao._id}: ${retentados} lote(s) marcados para nova tentativa`);
+
     res.json({
       sucesso: true,
       mensagem: `${retentados} lote(s) marcados para nova tentativa`,
@@ -351,32 +324,36 @@ app.post('/api/produtos/processar-retentar/:sessaoId', async (req, res) => {
   }
 });
 
-// 🛣️ Outras rotas
+// 🛣️ Rotas existentes mantidas
 app.use('/api/auth', authRoutes);
 app.use('/api/produtos', produtoRoutes);
 app.use('/api/pedidos', pedidoRoutes);
 app.use('/api/ml', mlRoutes);
 
+// 🧪 Rota de teste
 app.get('/api', (req, res) => {
   res.json({
     mensagem: 'API da Loja rodando! 🚀',
     processador: {
-      modelo: 'gemini-3.6-flash',
+      provedor: 'Groq',
+      modelo: CONFIG.MODELO,
       tamanhoLote: CONFIG.TAMANHO_LOTE,
-      timeout: `${CONFIG.TIMEOUT_POR_LOTE / 1000}s`,
-      retentativas: CONFIG.MAX_TENTATIVAS
+      timeoutPorLote: `${CONFIG.TIMEOUT_POR_LOTE / 1000}s`,
+      maxTentativas: CONFIG.MAX_TENTATIVAS
     }
   });
 });
 
-// 🔗 MongoDB
+// 🔗 Conectar MongoDB
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ MongoDB CONECTADO'))
-  .catch(err => console.log('❌ Erro MongoDB:', err.message));
+  .then(() => console.log('✅ MongoDB Atlas CONECTADO com sucesso!'))
+  .catch((err) => console.log('❌ Erro ao conectar MongoDB:', err.message));
 
-// 🚀 Inicia
+// 🚀 Iniciar servidor
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`\n🚀 Servidor: http://localhost:${PORT}`);
-  console.log(`🤖 Processador em lote com sessões ativado!`);
+  console.log(`\n🚀 Servidor rodando em: http://localhost:${PORT}`);
+  console.log(`📚 API disponível em: http://localhost:${PORT}/api`);
+  console.log(`🤖 Processador: GROQ | Modelo: ${CONFIG.MODELO}`);
+  console.log(`📦 Lotes: ${CONFIG.TAMANHO_LOTE} linhas | ⏱️ Timeout: ${CONFIG.TIMEOUT_POR_LOTE / 1000}s | 🔄 Retry: ${CONFIG.MAX_TENTATIVAS}x`);
 });
