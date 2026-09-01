@@ -87,7 +87,7 @@ app.post('/api/produtos/processar-lista', async (req, res) => {
 
     // 🤖 Modelo CORRIGIDO e com configurações de segurança
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash', // ✅ CORRIGIDO — não existe 3.6-flash
+      model: 'gemini-3.6-flash',
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1, // ✅ Mais consistente, menos criativo
