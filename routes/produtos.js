@@ -201,7 +201,7 @@ async function buscarImagemWeb(nomeProduto) {
 // ==========================================
 const produtoController = require('../controllers/produtoController');
 
-router.post('/importar-lote', async (req, res) => {
+router.post('/importar-lote', requireAuth, async (req, res) => {
   try {
     const { produtos } = req.body;
 
@@ -280,5 +280,16 @@ router.post('/importar-lote', async (req, res) => {
     res.status(400).json({ sucesso: false, error: err.message });
   }
 });
+
+// Rotas CRUD: as rotas específicas devem ficar antes de /:id.
+router.get('/', requireAuth, produtoController.listar);
+router.get('/disponiveis', produtoController.listarDisponiveis);
+router.get('/relatorio', requireAuth, produtoController.relatorio);
+router.get('/categoria/:categoria', produtoController.buscarPorCategoria);
+router.get('/:id', requireAuth, produtoController.buscarPorId);
+
+router.post('/', requireAuth, produtoController.criar);
+router.put('/:id', requireAuth, produtoController.atualizar);
+router.delete('/:id', requireAuth, produtoController.excluir);
 
 module.exports = router;
