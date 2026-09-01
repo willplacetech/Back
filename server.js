@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -28,8 +29,14 @@ app.use(cors({
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// 🤖 Inicializa GROQ
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// 🤖 Inicializa GROQ de forma opcional para não impedir a API de catálogo
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
+
+function garantirGroqDisponivel() {
+  if (!groq) {
+    throw new Error('GROQ_API_KEY ausente. Configure a chave para usar processamento de listas com IA.');
+  }
+}
 
 // ✅ CONFIGURAÇÕES DE PROCESSAMENTO
 const CONFIG = {
@@ -69,6 +76,8 @@ function dividirListaEmLotes(texto) {
 
 // ✅ PROCESSA UM LOTE COM GROQ
 async function processarUmLote(loteTexto, contexto) {
+  garantirGroqDisponivel();
+
   const prompt = `
 Categoria atual: ${contexto || 'Geral'}
 
@@ -343,8 +352,8 @@ app.get('/api', (req, res) => {
   });
 });
 
-// 🔗 Conectar MongoDB
-mongoose.connect(process.env.MONGODB_URI)
+// 🔗 Conectar MongoDB no banco correto do catálogo
+mongoose.connect(process.env.MONGODB_URI, { dbName: 'catalogo' })
   .then(() => console.log('✅ MongoDB Atlas CONECTADO com sucesso!'))
   .catch((err) => console.log('❌ Erro ao conectar MongoDB:', err.message));
 
