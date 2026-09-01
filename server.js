@@ -31,7 +31,7 @@ app.use(express.urlencoded({ extended: true }));
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ✅ DIVIDE A LISTA EM LOTES PRESERVANDO CATEGORIAS
-function dividirListaEmLotes(texto, tamanhoLote = 50) {
+function dividirListaEmLotes(texto, tamanhoLote = 20) {
   const linhas = texto.split('\n').filter(l => l.trim().length > 0);
   const lotes = [];
   let blocoAtual = [];
@@ -82,8 +82,8 @@ app.post('/api/produtos/processar-lista', async (req, res) => {
     }
 
     // 📦 Divide em lotes
-    const lotes = dividirListaEmLotes(listaBruta, 50);
-    console.log(`📦 Lista dividida em ${lotes.length} lote(s) de ~50 itens`);
+    const lotes = dividirListaEmLotes(listaBruta, 20);
+    console.log(`📦 Lista dividida em ${lotes.length} lote(s) de ~20 itens`);
 
     // 🤖 Modelo CORRIGIDO e com configurações de segurança
     const model = genAI.getGenerativeModel({
