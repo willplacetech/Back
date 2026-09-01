@@ -6,6 +6,33 @@
 const https = require('https');
 const http = require('http');
 
+async function validarImagemUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+
+  const valor = url.trim();
+  if (!valor || !/^https?:\/\//i.test(valor)) return false;
+
+  return new Promise((resolve) => {
+    const protocolo = valor.startsWith('https:') ? https : http;
+    const req = protocolo.get(valor, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      timeout: 15000
+    }, (res) => {
+      const statusOk = res.statusCode >= 200 && res.statusCode < 400;
+      const contentType = String(res.headers['content-type'] || '');
+      const tipoImagem = contentType.includes('image/') || /\.(?:jpg|jpeg|png|webp|gif|avif|bmp|svg)(?:\?.*)?$/i.test(valor);
+      res.resume();
+      resolve(statusOk && tipoImagem);
+    });
+
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
 /**
  * Busca imagem via Bing Image Search (sem API key necessária)
  */
@@ -133,26 +160,36 @@ async function buscarImagemPixabay(nomeProduto, apiKey) {
  */
 async function buscarImagemProduto(nomeProduto, config = {}) {
   const { unsplashKey, pixabayKey, tentarBing = true } = config;
+  const nome = String(nomeProduto || '').trim();
+  if (!nome) return null;
 
-  // Tenta Unsplash primeiro (melhor qualidade)
+  const buscas = [];
+
   if (unsplashKey) {
-    const url = await buscarImagemUnsplash(nomeProduto, unsplashKey);
-    if (url) return url;
+    buscas.push(() => buscarImagemUnsplash(nome, unsplashKey));
   }
 
-  // Tenta Pixabay
   if (pixabayKey) {
-    const url = await buscarImagemPixabay(nomeProduto, pixabayKey);
-    if (url) return url;
+    buscas.push(() => buscarImagemPixabay(nome, pixabayKey));
   }
 
-  // Tenta Bing (sem API key)
   if (tentarBing) {
-    const url = await buscarImagemBing(nomeProduto);
-    if (url) return url;
+    buscas.push(() => buscarImagemBing(nome));
   }
 
-  // Fallback: URL genérica
+  for (let tentativa = 1; tentativa <= 3; tentativa += 1) {
+    for (const buscar of buscas) {
+      try {
+        const url = await buscar();
+        if (url && await validarImagemUrl(url)) {
+          return url;
+        }
+      } catch (err) {
+        console.warn(`Falha ao buscar imagem na tentativa ${tentativa}:`, err.message);
+      }
+    }
+  }
+
   return null;
 }
 
@@ -160,5 +197,6 @@ module.exports = {
   buscarImagemProduto,
   buscarImagemUnsplash,
   buscarImagemPixabay,
-  buscarImagemBing
+  buscarImagemBing,
+  validarImagemUrl
 };
