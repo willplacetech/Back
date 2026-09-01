@@ -5,6 +5,7 @@ const axios = require('axios');
 const dns = require('dns').promises;
 const net = require('net');
 const Produto = require('../models/Produto');
+const { buscarImagemProduto } = require('../utils/imagemSearch');
 
 function ipPrivado(ip) {
   if (net.isIPv4(ip)) {
@@ -141,6 +142,13 @@ router.post('/importar-fornecedor', requireAuth, async (req, res) => {
 // ==========================================
 async function buscarImagemWeb(nomeProduto) {
   try {
+    const imagemAutomatica = await buscarImagemProduto(nomeProduto, {
+      unsplashKey: process.env.UNSPLASH_ACCESS_KEY,
+      pixabayKey: process.env.PIXABAY_API_KEY,
+      tentarBing: true
+    });
+    if (imagemAutomatica) return imagemAutomatica;
+
     // Estratégia 1: Tentar Open Graph.io API
     try {
       const ogUrl = `https://opengraph.io/api/1.1/site/${encodeURIComponent('https://www.google.com/search?q=' + encodeURIComponent(nomeProduto))}`;
@@ -196,6 +204,28 @@ async function buscarImagemWeb(nomeProduto) {
   }
 }
 
+async function buscarDescricaoWeb(nomeProduto) {
+  try {
+    const url = `https://www.bing.com/search?q=${encodeURIComponent(`"${nomeProduto}"`)}`;
+    const resposta = await axios.get(url, { headers: HEADERS, timeout: 10000 });
+    const primeiroResultado = resposta.data.match(/<li class="b_algo"[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/i);
+    if (!primeiroResultado) return '';
+
+    const descricao = primeiroResultado[1]
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return descricao.length >= 30 ? descricao.substring(0, 600) : '';
+  } catch (err) {
+    console.error(`Não foi possível buscar descrição de ${nomeProduto}:`, err.message);
+    return '';
+  }
+}
+
 // ==========================================
 // 📦 IMPORTAR PRODUTOS EM LOTE
 // ==========================================
@@ -204,6 +234,7 @@ const produtoController = require('../controllers/produtoController');
 router.post('/importar-lote', requireAuth, async (req, res) => {
   try {
     const { produtos } = req.body;
+    const atualizarExistentes = req.body.atualizarExistentes !== false;
 
     if (!Array.isArray(produtos) || produtos.length === 0) {
       return res.status(400).json({ sucesso: false, error: 'Array de produtos é obrigatório' });
@@ -235,27 +266,43 @@ router.post('/importar-lote', requireAuth, async (req, res) => {
             return;
           }
 
-          // Busca imagem se não tiver fornecida
-          let imagemUrl = p.imagem || '';
+          const nomeNormalizado = p.nome.trim();
+          const existente = atualizarExistentes
+            ? await Produto.findOne({ nome: { $regex: `^${nomeNormalizado.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } })
+            : null;
+          const descricaoWeb = !p.descricao && (!existente || !existente.descricao)
+            ? await buscarDescricaoWeb(nomeNormalizado)
+            : '';
+
+          // Busca imagem apenas para produto novo ou sem imagem cadastrada.
+          let imagemUrl = p.imagem || existente?.imagem || '';
           if (!imagemUrl) {
-            imagemUrl = await buscarImagemWeb(p.nome) || '';
+            imagemUrl = await buscarImagemWeb(nomeNormalizado) || '';
           }
 
-          // Cria o produto
-          const produto = await Produto.create({
-            nome: p.nome.trim(),
-            descricao: p.descricao || '',
-            preco,
-            precoPersonalizado,
-            categoria: p.categoria || 'Importado',
-            imagem: imagemUrl,
-            disponivel: p.disponivel !== false
-          });
+          const produto = existente
+            ? await Produto.findByIdAndUpdate(existente._id, {
+              preco,
+              precoPersonalizado,
+              categoria: p.categoria || existente.categoria,
+              ...(descricaoWeb && !existente.descricao ? { descricao: descricaoWeb } : {}),
+              ...(imagemUrl && !existente.imagem ? { imagem: imagemUrl } : {})
+            }, { new: true, runValidators: true })
+            : await Produto.create({
+              nome: nomeNormalizado,
+              descricao: p.descricao || descricaoWeb,
+              preco,
+              precoPersonalizado,
+              categoria: p.categoria || 'Importado',
+              imagem: imagemUrl,
+              disponivel: p.disponivel !== false
+            });
 
           resultados.sucesso.push({
             indice: i + idx,
             nome: produto.nome,
-            id: produto._id
+            id: produto._id,
+            acao: existente ? 'atualizado' : 'adicionado'
           });
 
         } catch (err) {
