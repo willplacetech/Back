@@ -30,8 +30,17 @@ app.use(express.urlencoded({ extended: true }));
 // 🤖 Inicializa Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ✅ DIVIDE A LISTA EM LOTES PRESERVANDO CATEGORIAS
-function dividirListaEmLotes(texto, tamanhoLote = 20) {
+// ✅ CONFIGURAÇÕES DEFINITIVAS — AJUSTE AQUI
+const CONFIG = {
+  TAMANHO_LOTE: 15,          // 📦 Menor ainda: 15 linhas por lote
+  TIMEOUT_POR_LOTE: 60000,   // ⏱️ 60 SEGUNDOS por lote (dobro!)
+  MAX_TENTATIVAS: 2,         // 🔄 Se falhar, tenta mais 1 vez automaticamente
+  TEMPERATURA: 0.05,         // 🔥 Quase zero = mais rápido e direto
+  MAX_TOKENS: 4096           // 📏 Menos tokens de saída = mais rápido
+};
+
+// ✅ DIVIDE EM LOTES MUITO PEQUENOS
+function dividirListaEmLotes(texto) {
   const linhas = texto.split('\n').filter(l => l.trim().length > 0);
   const lotes = [];
   let blocoAtual = [];
@@ -39,7 +48,6 @@ function dividirListaEmLotes(texto, tamanhoLote = 20) {
   let ultimaCategoria = '';
 
   for (const linha of linhas) {
-    // Detecta linha de categoria
     if (linha.includes('⬇️') || linha.includes('---') || linha.toUpperCase().includes('LINHA')) {
       ultimaCategoria = linha.trim();
     }
@@ -47,18 +55,16 @@ function dividirListaEmLotes(texto, tamanhoLote = 20) {
     blocoAtual.push(linha);
     contador++;
 
-    // Fecha o lote ao atingir o tamanho
-    if (contador >= tamanhoLote) {
+    if (contador >= CONFIG.TAMANHO_LOTE) {
       lotes.push({
         conteudo: blocoAtual.join('\n'),
         categoriaContexto: ultimaCategoria
       });
-      blocoAtual = [ultimaCategoria]; // Preserva categoria no próximo lote
+      blocoAtual = [ultimaCategoria];
       contador = 0;
     }
   }
 
-  // Adiciona o último lote se tiver itens restantes
   if (blocoAtual.length > 0) {
     lotes.push({
       conteudo: blocoAtual.join('\n'),
@@ -69,7 +75,54 @@ function dividirListaEmLotes(texto, tamanhoLote = 20) {
   return lotes.length ? lotes : [{ conteudo: texto, categoriaContexto: '' }];
 }
 
-// ✨ ROTA PRINCIPAL — Processa lista com lotes + timeout + JSON seguro
+// ✅ FUNÇÃO COM RETRY AUTOMÁTICO
+async function processarLoteComRetry(model, loteTexto, contexto, tentativa = 1) {
+  try {
+    console.log(`🔄 Tentativa ${tentativa}/${CONFIG.MAX_TENTATIVAS}...`);
+
+    // 🚀 PROMPTO MUITO MAIS CURTO E DIRETO = MAIS RÁPIDO
+    const prompt = `
+Categoria: ${contexto || 'Geral'}
+
+Extraia produtos desta lista e retorne SOMENTE JSON:
+{"categorias":[{"nomeCategoria":"NOME","produtos":[{"nome":"","cor":"","capacidade":"","preco":"R$","imagemUrl":"","descricao":""}]}]}
+
+Lista:
+${loteTexto}
+`;
+
+    const resultado = await Promise.race([
+      model.generateContent(prompt),
+      new Promise((_, rejeita) =>
+        setTimeout(() => rejeita(new Error('Timeout')), CONFIG.TIMEOUT_POR_LOTE)
+      )
+    ]);
+
+    let texto = resultado.response.text()
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/g, '')
+      .trim();
+
+    // Tenta parsear
+    try {
+      return JSON.parse(texto);
+    } catch {
+      // Tenta reparar JSON
+      if (!texto.endsWith('}')) texto = texto.replace(/,\s*$/, '') + '}]}';
+      return JSON.parse(texto);
+    }
+
+  } catch (erro) {
+    if (tentativa < CONFIG.MAX_TENTATIVAS) {
+      console.log(`⚠️ Falhou, tentando novamente em 2s...`);
+      await new Promise(r => setTimeout(r, 2000)); // Espera 2s
+      return processarLoteComRetry(model, loteTexto, contexto, tentativa + 1);
+    }
+    throw erro;
+  }
+}
+
+// ✨ ROTA PRINCIPAL
 app.post('/api/produtos/processar-lista', async (req, res) => {
   try {
     const { listaBruta } = req.body;
@@ -81,131 +134,81 @@ app.post('/api/produtos/processar-lista', async (req, res) => {
       });
     }
 
-    // 📦 Divide em lotes
-    const lotes = dividirListaEmLotes(listaBruta, 20);
-    console.log(`📦 Lista dividida em ${lotes.length} lote(s) de ~20 itens`);
+    const lotes = dividirListaEmLotes(listaBruta);
+    console.log(`📦 ${lotes.length} lote(s) de ${CONFIG.TAMANHO_LOTE} linhas | Timeout: ${CONFIG.TIMEOUT_POR_LOTE / 1000}s`);
 
-    // 🤖 Modelo CORRIGIDO e com configurações de segurança
     const model = genAI.getGenerativeModel({
       model: 'gemini-3.6-flash',
       generationConfig: {
         responseMimeType: 'application/json',
-        temperature: 0.1, // ✅ Mais consistente, menos criativo
-        maxOutputTokens: 8192 // ✅ Garante resposta completa
+        temperature: CONFIG.TEMPERATURA,
+        maxOutputTokens: CONFIG.MAX_TOKENS
       }
     });
 
-    const criarPrompt = (loteTexto, contextoCategoria) => `
-${contextoCategoria ? `CONTEXTO — Categoria atual: ${contextoCategoria}` : ''}
-
-Você é um processador de produtos. Sua tarefa:
-1. Extraia TODOS os produtos da lista abaixo
-2. Retorne APENAS JSON válido seguindo exatamente este formato:
-
-{
-  "categorias": [
-    {
-      "nomeCategoria": "nome da seção/categoria",
-      "produtos": [
-        {
-          "nome": "nome completo do produto",
-          "cor": "cor",
-          "capacidade": "ex: 256GB",
-          "preco": "R$ X.XXX,XX",
-          "imagemUrl": "link de busca oficial do produto",
-          "descricao": "descrição técnica do produto"
-        }
-      ]
-    }
-  ]
-}
-
-REGRAS:
-- imagemUrl: crie link de busca padrão do produto (ex: site oficial Apple/fabricante)
-- descricao: escreva especificações reais do produto com informações conhecidas
-- NÃO adicione comentários, NÃO use blocos de código
-- Retorne APENAS JSON, sem texto adicional, sem explicações
-
-Lista para processar:
-${loteTexto}
-`;
-
     const categoriasMap = new Map();
     let totalProdutos = 0;
+    let lotesComSucesso = 0;
+    let lotesComFalha = 0;
 
-    // 🔄 Processa um lote por vez com TIMEOUT de segurança
     for (let i = 0; i < lotes.length; i++) {
       const { conteudo, categoriaContexto } = lotes[i];
-      console.log(`🔄 Processando lote ${i + 1}/${lotes.length}...`);
+      console.log(`\n📦 Lote ${i + 1}/${lotes.length}:`);
 
-      // ⏱️ Timeout de 30s por lote — evita travar em 88%
-      const resultado = await Promise.race([
-        model.generateContent(criarPrompt(conteudo, categoriaContexto)),
-        new Promise((_, rejeita) =>
-          setTimeout(() => rejeita(new Error(`Timeout no lote ${i + 1} (30s)`)), 30000)
-        )
-      ]);
-
-      let textoResposta = resultado.response.text();
-
-      // 🧹 LIMPA resposta — remove marcações ```json ... ``` se existirem
-      textoResposta = textoResposta
-        .replace(/```json\s*/gi, '')
-        .replace(/```\s*/g, '')
-        .trim();
-
-      // ✅ Faz o parse com segurança
-      let dadosLote;
       try {
-        dadosLote = JSON.parse(textoResposta);
-      } catch (parseErr) {
-        console.warn(`⚠️ Lote ${i + 1} JSON incompleto, tentando reparar...`);
-        // Tenta fechar JSON se foi cortado
-        textoResposta = textoResposta.replace(/\}\s*$/, '').concat('}]}');
-        dadosLote = JSON.parse(textoResposta);
-      }
+        const dadosLote = await processarLoteComRetry(model, conteudo, categoriaContexto);
 
-      // 📊 Junta resultados mantendo categorias unificadas
-      for (const categoria of dadosLote.categorias || []) {
-        const nomeCategoria = categoria.nomeCategoria?.trim() || 'Sem Categoria';
-        if (!nomeCategoria || nomeCategoria.length < 2) continue;
+        for (const categoria of dadosLote.categorias || []) {
+          const nomeCategoria = categoria.nomeCategoria?.trim() || 'Sem Categoria';
+          if (!nomeCategoria || nomeCategoria.length < 2) continue;
 
-        const existente = categoriasMap.get(nomeCategoria);
-        if (existente) {
-          existente.produtos.push(...(categoria.produtos || []));
-        } else {
-          categoriasMap.set(nomeCategoria, {
-            nomeCategoria,
-            produtos: categoria.produtos || []
-          });
+          const existente = categoriasMap.get(nomeCategoria);
+          if (existente) {
+            existente.produtos.push(...(categoria.produtos || []));
+          } else {
+            categoriasMap.set(nomeCategoria, {
+              nomeCategoria,
+              produtos: categoria.produtos || []
+            });
+          }
+          totalProdutos += (categoria.produtos?.length || 0);
         }
-        totalProdutos += (categoria.produtos?.length || 0);
-      }
 
-      console.log(`✅ Lote ${i + 1} concluído — ${totalProdutos} produtos acumulados`);
+        lotesComSucesso++;
+        console.log(`✅ Lote ${i + 1} OK | Total: ${totalProdutos} produtos`);
+
+      } catch (erroLote) {
+        lotesComFalha++;
+        console.error(`❌ Lote ${i + 1} FALHOU: ${erroLote.message}`);
+        console.log(`⏭️ Continuando com os próximos lotes...`);
+      }
     }
 
-    // ✅ Resposta final
-    const dados = {
-      categorias: [...categoriasMap.values()]
-    };
+    if (totalProdutos === 0) {
+      return res.status(500).json({
+        sucesso: false,
+        erro: 'Nenhum produto foi processado. Tente novamente.'
+      });
+    }
+
+    const dados = { categorias: [...categoriasMap.values()] };
 
     res.json({
       sucesso: true,
-      mensagem: `✅ ${dados.categorias.length} categorias, ${totalProdutos} produtos em ${lotes.length} lote(s)`,
+      mensagem: `✅ ${totalProdutos} produtos | ${lotesComSucesso} lotes OK${lotesComFalha > 0 ? ` | ${lotesComFalha} lote(s) falharam` : ''}`,
       lotesProcessados: lotes.length,
+      lotesComSucesso,
+      lotesComFalha,
       totalProdutos,
       dados
     });
 
   } catch (erro) {
-    console.error('❌ ERRO NO PROCESSAMENTO:', erro.message);
+    console.error('\n❌ ERRO GERAL:', erro.message);
     res.status(500).json({
       sucesso: false,
       erro: erro.message || 'Falha ao processar lista',
-      dica: erro.message?.includes('Timeout')
-        ? 'Sugestão: tente reduzir o tamanho da lista ou tente novamente mais tarde'
-        : undefined
+      dica: 'Tente novamente ou divida a lista em partes menores'
     });
   }
 });
@@ -218,7 +221,15 @@ app.use('/api/ml', mlRoutes);
 
 // 🧪 Rota de teste
 app.get('/api', (req, res) => {
-  res.json({ mensagem: 'API da Loja rodando! 🚀' });
+  res.json({
+    mensagem: 'API da Loja rodando! 🚀',
+    processador: {
+      modelo: 'gemini-3.6-flash',
+      tamanhoLote: CONFIG.TAMANHO_LOTE,
+      timeoutPorLote: `${CONFIG.TIMEOUT_POR_LOTE / 1000}s`,
+      maxTentativas: CONFIG.MAX_TENTATIVAS
+    }
+  });
 });
 
 // 🔗 Conectar no MongoDB
@@ -229,7 +240,8 @@ mongoose.connect(process.env.MONGODB_URI)
 // 🚀 Iniciar servidor
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando em: http://localhost:${PORT}`);
-  console.log(`📚 API disponível em: http://localhost:${PORT}/api`);
-  console.log(`🤖 Processador de Lista: http://localhost:${PORT}/api/produtos/processar-lista`);
+  console.log(`\n🚀 Servidor rodando em: http://localhost:${PORT}`);
+  console.log(`📚 API: http://localhost:${PORT}/api`);
+  console.log(`🤖 Processador: gemini-3.6-flash`);
+  console.log(`📦 Lotes: ${CONFIG.TAMANHO_LOTE} linhas | ⏱️ Timeout: ${CONFIG.TIMEOUT_POR_LOTE / 1000}s | 🔄 Retry: ${CONFIG.MAX_TENTATIVAS}x`);
 });
