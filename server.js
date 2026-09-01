@@ -30,6 +30,26 @@ app.use(express.urlencoded({ extended: true }));
 // 🤖 Inicializa Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+function dividirListaEmLotes(texto, tamanhoLote = 50) {
+  const blocos = texto.split(/\r?\n\s*\r?\n/).map(bloco => bloco.trim()).filter(Boolean);
+  const lotes = [];
+  let categoriaAtual = '';
+
+  for (let inicio = 0; inicio < blocos.length; inicio += tamanhoLote) {
+    const blocoAtual = blocos.slice(inicio, inicio + tamanhoLote);
+    const conteudo = blocoAtual.map(bloco => {
+      const categoria = bloco.split(/\r?\n/).find(linha => linha.includes('⬇️'));
+      if (categoria) categoriaAtual = categoria;
+      return categoriaAtual && !bloco.includes('⬇️')
+        ? `${categoriaAtual}\n${bloco}`
+        : bloco;
+    });
+    lotes.push(conteudo.join('\n\n'));
+  }
+
+  return lotes.length ? lotes : [texto];
+}
+
 // ✨ NOVA ROTA — Processa lista bruta → JSON estruturado
 app.post('/api/produtos/processar-lista', async (req, res) => {
   try {
@@ -43,14 +63,14 @@ app.post('/api/produtos/processar-lista', async (req, res) => {
     }
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-3.6-flash',
       generationConfig: {
         responseMimeType: 'application/json',
-        temperature: 0.2
+        temperature: 0.1
       }
     });
 
-    const prompt = `
+    const criarPrompt = (lote) => `
 Você é um processador de produtos. Sua tarefa:
 1. Extraia TODOS os produtos da lista abaixo
 2. Retorne APENAS JSON válido seguindo exatamente este formato:
@@ -80,16 +100,35 @@ REGRAS:
 - Retorne APENAS JSON, sem texto adicional
 
 Lista para processar:
-${listaBruta}
+${lote}
 `;
 
-    const resultado = await model.generateContent(prompt);
-    const textoResposta = resultado.response.text();
-    const dados = JSON.parse(textoResposta);
+    const lotes = dividirListaEmLotes(listaBruta, 50);
+    const categoriasMap = new Map();
+
+    for (const lote of lotes) {
+      const resultado = await model.generateContent(criarPrompt(lote));
+      const dadosLote = JSON.parse(resultado.response.text());
+
+      for (const categoria of dadosLote.categorias || []) {
+        const nomeCategoria = categoria.nomeCategoria || 'Sem categoria';
+        const categoriaExistente = categoriasMap.get(nomeCategoria);
+        if (categoriaExistente) {
+          categoriaExistente.produtos.push(...(categoria.produtos || []));
+        } else {
+          categoriasMap.set(nomeCategoria, {
+            ...categoria,
+            produtos: categoria.produtos || []
+          });
+        }
+      }
+    }
+
+    const dados = { categorias: [...categoriasMap.values()] };
 
     res.json({
       sucesso: true,
-      mensagem: `✅ ${dados.categorias?.length || 0} categorias processadas`,
+      mensagem: `✅ ${dados.categorias.length} categorias processadas em ${lotes.length} lote(s)`,
       dados
     });
 
