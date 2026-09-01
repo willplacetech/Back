@@ -1,4 +1,26 @@
 const Produto = require('../models/Produto');
+const { buscarImagemProduto } = require('../utils/imagemSearch');
+
+const urlImagemDireta = (valor) => {
+  try {
+    const url = new URL(String(valor || '').trim());
+    return ['http:', 'https:'].includes(url.protocol) && /\.(jpg|jpeg|png|webp|gif)(?:$|\?)/i.test(url.pathname + url.search)
+      ? url.toString()
+      : '';
+  } catch {
+    return '';
+  }
+};
+
+const obterImagemProduto = async (nome, informada) => {
+  const imagemValida = urlImagemDireta(informada);
+  if (imagemValida) return imagemValida;
+  return await buscarImagemProduto(nome, {
+    unsplashKey: process.env.UNSPLASH_ACCESS_KEY,
+    pixabayKey: process.env.PIXABAY_API_KEY,
+    tentarBing: true
+  }) || '';
+};
 
 // ✅ CRIAR PRODUTO
 exports.criar = async (req, res) => {
@@ -16,13 +38,15 @@ exports.criar = async (req, res) => {
       return res.status(400).json({ sucesso: false, error: 'Preço personalizado inválido' });
     }
 
+    const imagem = await obterImagemProduto(body.nome.trim(), body.imagem);
+
     const produto = await Produto.create({
       nome: body.nome.trim(),
       descricao: body.descricao || '',
       preco,
       precoPersonalizado,
       categoria: body.categoria || '',
-      imagem: body.imagem || '',
+      imagem,
       disponivel: body.disponivel !== undefined ? body.disponivel : true
     });
 
