@@ -28,10 +28,12 @@ async function buscarImagemBing(nomeProduto) {
 
         res.on('end', () => {
           try {
-            // Procura por padrões de URLs de imagem
-            const matches = data.match(/"thumburl":"([^"]+)"/g);
+            // O Bing pode retornar a imagem principal como murl ou thumburl.
+            const matches = data.match(/"(?:murl|thumburl)":"([^"]+)"/g);
             if (matches && matches.length > 0) {
-              const imageUrl = matches[0].match(/"thumburl":"([^"]+)"/)[1];
+              const imageUrl = matches[0].match(/"(?:murl|thumburl)":"([^"]+)"/)[1]
+                .replace(/\\u002f/g, '/')
+                .replace(/\\u0026/g, '&');
               resolve(imageUrl);
               return;
             }
