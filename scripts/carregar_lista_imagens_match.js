@@ -208,8 +208,8 @@ function itemScore(itemName, dbName) {
 }
 
 async function carregarLista() {
-  await mongoose.connect(process.env.MONGODB_URI);
-  console.log('✅ Conectado ao MongoDB');
+await mongoose.connect(process.env.MONGODB_URI, { dbName: 'catalogo' });
+    console.log('✅ Conectado ao MongoDB (catalogo)');
 
   const produtos = await Produto.find({}).lean();
   let atualizados = 0;

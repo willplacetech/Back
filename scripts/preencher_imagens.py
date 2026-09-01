@@ -20,11 +20,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 try:
-    from motor.motor_asyncio import AsyncClient as MongoAsyncClient
-    from pymongo import ASCENDING
+    from motor.motor_asyncio import AsyncIOMotorClient
 except ImportError:
     logger.error("❌ Motor não instalado. Execute: pip install motor pymongo")
-    exit(1)
+    raise
 
 from dotenv import load_dotenv
 
@@ -93,27 +92,77 @@ async def buscar_imagem_bing(session: aiohttp.ClientSession, nome: str) -> Optio
     return None
 
 
+def imagem_valida(url: Optional[str]) -> bool:
+    """Considera válida apenas uma URL real de imagem."""
+    if not isinstance(url, str):
+        return False
+    texto = url.strip()
+    if not texto or not texto.startswith('http'):
+        return False
+    extensoes = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif', '.bmp']
+    return any(ext in texto.lower() for ext in extensoes)
+
+
 async def validar_url_imagem(session: aiohttp.ClientSession, url: str) -> bool:
     """Valida se a URL é uma imagem real"""
-    if not url or not url.startswith('http'):
+    if not imagem_valida(url):
         return False
     
     try:
         async with session.head(url, timeout=aiohttp.ClientTimeout(total=8), allow_redirects=True) as resp:
             if 200 <= resp.status < 400:
                 content_type = resp.headers.get('content-type', '').lower()
-                return 'image' in content_type or any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif'])
+                return 'image' in content_type or any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif', '.bmp'])
     except Exception:
         pass
     
     return False
 
 
-async def buscar_imagem_produto(session: aiohttp.ClientSession, nome: str) -> Optional[str]:
+async def extrair_og_image_da_pagina(session: aiohttp.ClientSession, url: str) -> Optional[str]:
+    """Tenta extrair a imagem real da página oficial do produto pela meta OG."""
+    if not isinstance(url, str) or not url.startswith('http'):
+        return None
+
+    try:
+        async with session.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=aiohttp.ClientTimeout(total=12),
+            allow_redirects=True
+        ) as resp:
+            if resp.status >= 400:
+                return None
+            html = await resp.text()
+
+        import re
+        padrao = re.compile(r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\'][^>]+content=["\']([^"\']+)["\']', re.I)
+        match = padrao.search(html)
+        if not match:
+            return None
+
+        raw = match.group(1).strip()
+        if raw.startswith('//'):
+            raw = 'https:' + raw
+        if raw.startswith('http') and await validar_url_imagem(session, raw):
+            return raw
+    except Exception as e:
+        logger.debug(f"Erro ao extrair OG image de {url}: {e}")
+
+    return None
+
+
+async def buscar_imagem_produto(session: aiohttp.ClientSession, nome: str, pagina_atual: Optional[str] = None) -> Optional[str]:
     """Busca imagem de um produto tentando múltiplas fontes"""
     nome_limpo = str(nome or '').strip()
     if not nome_limpo:
         return None
+
+    if pagina_atual and pagina_atual.startswith('http') and not imagem_valida(pagina_atual):
+        og_url = await extrair_og_image_da_pagina(session, pagina_atual)
+        if og_url:
+            logger.info(f"✅ {nome_limpo} (fonte: página oficial)")
+            return og_url
     
     # Tenta 3 vezes com diferentes combinações
     for tentativa in range(1, 4):
@@ -143,23 +192,20 @@ async def main():
         return
     
     # Conectar ao MongoDB
-    client = MongoAsyncClient(MONGO_URI)
-    db = client.get_default_database()
+    client = AsyncIOMotorClient(MONGO_URI)
+    db = client.catalogo
     produtos_col = db["produtos"]
     
     try:
-        # Buscar produtos sem imagem ou com imagem inválida
-        produtos = await produtos_col.find({
-            "$or": [
-                {"imagem": {"$exists": False}},
-                {"imagem": ""},
-                {"imagem": {"$regex": "^(?!https?://)"}}
-            ]
-        }).to_list(None)
+        produtos = await produtos_col.find({}).to_list(None)
+        produtos_para_processar = [
+            prod for prod in produtos
+            if not imagem_valida(prod.get('imagem'))
+        ]
+
+        logger.info(f"📦 Produtos com imagem vazia ou inválida: {len(produtos_para_processar)}")
         
-        logger.info(f"📦 Produtos com imagem vazia ou inválida: {len(produtos)}")
-        
-        if not produtos:
+        if not produtos_para_processar:
             logger.info("✨ Nenhum produto para atualizar")
             return
         
@@ -168,8 +214,8 @@ async def main():
         
         async with aiohttp.ClientSession() as session:
             # Processar em lotes de 5
-            for i in range(0, len(produtos), 5):
-                lote = produtos[i:i+5]
+            for i in range(0, len(produtos_para_processar), 5):
+                lote = produtos_para_processar[i:i+5]
                 
                 tarefas = [
                     processar_produto(session, produtos_col, prod)
@@ -188,7 +234,7 @@ async def main():
         logger.info(f"\n📊 Resumo Final:")
         logger.info(f"✅ Imagens preenchidas: {encontrados}")
         logger.info(f"❌ Sem resultado: {sem_resultado}")
-        logger.info(f"📈 Total processado: {encontrados + sem_resultado}/{len(produtos)}")
+        logger.info(f"📈 Total processado: {encontrados + sem_resultado}/{len(produtos_para_processar)}")
         
     finally:
         client.close()
@@ -198,16 +244,17 @@ async def processar_produto(session: aiohttp.ClientSession, col, produto: dict) 
     """Processa um único produto"""
     nome = produto.get('nome', 'produto')
     produto_id = produto.get('_id')
-    
-    imagem = await buscar_imagem_produto(session, nome)
-    
+    pagina_atual = produto.get('imagem')
+
+    imagem = await buscar_imagem_produto(session, nome, pagina_atual)
+
     if imagem:
         await col.update_one(
             {"_id": produto_id},
             {"$set": {"imagem": imagem}}
         )
         return True
-    
+
     return False
 
 

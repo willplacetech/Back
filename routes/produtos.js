@@ -6,6 +6,7 @@ const dns = require('dns').promises;
 const net = require('net');
 const Produto = require('../models/Produto');
 const { buscarImagemProduto } = require('../utils/imagemSearch');
+const { normalizarPreco } = require('../utils/precoUtils');
 
 function ipPrivado(ip) {
   if (net.isIPv4(ip)) {
@@ -72,8 +73,7 @@ router.post('/importar-fornecedor', requireAuth, async (req, res) => {
       }
 
       if (custoMatch) {
-        let valorStr = custoMatch[1].replace(/\./g, '').replace(',', '.');
-        atualCusto = Math.max(1, Number(valorStr));
+        atualCusto = Math.max(1, normalizarPreco(custoMatch[1]));
       }
     }
 
@@ -253,8 +253,8 @@ router.post('/importar-lote', requireAuth, async (req, res) => {
       
       await Promise.all(lote.map(async (p, idx) => {
         try {
-          const preco = Number(p.preco);
-          const precoPersonalizado = p.precoPersonalizado ? Number(p.precoPersonalizado) : undefined;
+          const preco = normalizarPreco(p.preco);
+          const precoPersonalizado = p.precoPersonalizado ? normalizarPreco(p.precoPersonalizado) : undefined;
 
           // Validações
           if (!p.nome || !p.nome.trim() || !Number.isFinite(preco) || preco <= 0) {

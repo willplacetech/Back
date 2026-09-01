@@ -1,6 +1,51 @@
 const mongoose = require('mongoose');
+const axios = require('axios');
 const Produto = require('../models/Produto');
 require('dotenv').config();
+
+async function resolverImagemDireta(url) {
+  if (!url || typeof url !== 'string') return '';
+
+  const texto = url.trim();
+  if (!texto) return '';
+
+  if (/\.(jpe?g|png|webp|gif|avif|bmp)(\?.*)?$/i.test(texto)) {
+    return texto;
+  }
+
+  try {
+    const resposta = await axios.get(texto, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 15000,
+      validateStatus: () => true,
+      maxRedirects: 10
+    });
+
+    const html = typeof resposta.data === 'string' ? resposta.data : '';
+    const padraoMeta = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["'][^>]*>/i);
+    const padraoJson = html.match(/"(?:og:image|twitter:image)"\s*:\s*"([^"]+)"/i);
+    const imagem = (padraoMeta ? padraoMeta[1] : padraoJson ? padraoJson[1] : '').trim();
+
+    if (!imagem) return '';
+
+    const urlFinal = imagem.startsWith('//') ? `https:${imagem}` : imagem.startsWith('/') ? new URL(imagem, texto).toString() : imagem;
+
+    const cabecalho = await axios.head(urlFinal, {
+      timeout: 8000,
+      validateStatus: () => true,
+      maxRedirects: 10
+    });
+
+    const contentType = (cabecalho.headers && cabecalho.headers['content-type']) || '';
+    if (contentType.includes('image') || /\.(jpe?g|png|webp|gif|avif|bmp)(\?.*)?$/i.test(urlFinal)) {
+      return urlFinal;
+    }
+  } catch (error) {
+    // ignora e continua sem imagem
+  }
+
+  return '';
+}
 
 const LISTA_IMAGENS = [
   { nome: 'iPhone 17 Pro Max 256GB Prata', preco: '6990.00', categoria: 'iPhones Lacrados', imagem: 'https://store.apple.com/iphone' },
@@ -164,8 +209,8 @@ const LISTA_IMAGENS = [
 
 async function atualizarProdutos() {
   try {
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log('✅ Conectado ao MongoDB');
+    await mongoose.connect(process.env.MONGODB_URI, { dbName: 'catalogo' });
+    console.log('✅ Conectado ao MongoDB (catalogo)');
 
     let atualizados = 0;
     let ignorados = 0;
@@ -191,10 +236,17 @@ async function atualizarProdutos() {
         continue;
       }
 
-      produto.imagem = url;
+      const imagemValida = await resolverImagemDireta(url);
+      if (!imagemValida) {
+        ignorados += 1;
+        console.log(`⚠️ Imagem inválida para: ${produto.nome} (${url})`);
+        continue;
+      }
+
+      produto.imagem = imagemValida;
       await produto.save();
       atualizados += 1;
-      console.log(`✅ Atualizado: ${produto.nome}`);
+      console.log(`✅ Atualizado: ${produto.nome} -> ${imagemValida}`);
     }
 
     console.log('\n📊 Resumo final');
@@ -210,4 +262,8 @@ async function atualizarProdutos() {
   }
 }
 
-atualizarProdutos();
+module.exports = { LISTA_IMAGENS, atualizarProdutos };
+
+if (require.main === module) {
+  atualizarProdutos();
+}

@@ -1,5 +1,6 @@
 const Produto = require('../models/Produto');
 const { buscarImagemProduto } = require('../utils/imagemSearch');
+const { normalizarPreco } = require('../utils/precoUtils');
 
 const urlImagemDireta = (valor) => {
   try {
@@ -26,10 +27,10 @@ const obterImagemProduto = async (nome, informada) => {
 exports.criar = async (req, res) => {
   try {
     const body = req.body;
-    const preco = Number(body.preco);
+    const preco = normalizarPreco(body.preco);
     const precoPersonalizado = body.precoPersonalizado === undefined || body.precoPersonalizado === ''
       ? undefined
-      : Number(body.precoPersonalizado);
+      : normalizarPreco(body.precoPersonalizado);
 
     if (!body.nome || !body.nome.trim() || !Number.isFinite(preco) || preco <= 0) {
       return res.status(400).json({ sucesso: false, error: 'Nome do produto é obrigatório!' });
@@ -201,8 +202,8 @@ exports.importarLote = async (req, res) => {
     for (let i = 0; i < produtos.length; i++) {
       try {
         const p = produtos[i];
-        const preco = Number(p.preco);
-        const precoPersonalizado = p.precoPersonalizado ? Number(p.precoPersonalizado) : undefined;
+        const preco = normalizarPreco(p.preco);
+        const precoPersonalizado = p.precoPersonalizado ? normalizarPreco(p.precoPersonalizado) : undefined;
 
         // Validações
         if (!p.nome || !p.nome.trim() || !Number.isFinite(preco) || preco <= 0) {
