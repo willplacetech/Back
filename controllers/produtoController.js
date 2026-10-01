@@ -1,6 +1,8 @@
 const Produto = require('../models/Produto');
 const { buscarImagemProduto } = require('../utils/imagemSearch');
 const { normalizarPreco } = require('../utils/precoUtils');
+const { agruparProdutos, filtrarProdutos, listarFiltros, resumirProduto } = require('../utils/variantes');
+const { salvarOferta, chaveDoModelo } = require('../utils/salvarOferta');
 
 const urlImagemDireta = (valor) => {
   try {
@@ -27,7 +29,8 @@ const obterImagemProduto = async (nome, informada) => {
 exports.criar = async (req, res) => {
   try {
     const body = req.body;
-    const preco = normalizarPreco(body.preco);
+    const preco = Array.isArray(body.variants) && body.variants.length
+      ? Math.min(...body.variants.map(v => Number(v.precoCusto || v.preco))) : normalizarPreco(body.preco);
     const precoPersonalizado = body.precoPersonalizado === undefined || body.precoPersonalizado === ''
       ? undefined
       : normalizarPreco(body.precoPersonalizado);
@@ -39,16 +42,23 @@ exports.criar = async (req, res) => {
       return res.status(400).json({ sucesso: false, error: 'Preço personalizado inválido' });
     }
 
-    const imagem = await obterImagemProduto(body.nome.trim(), body.imagem);
+    const imagem = await obterImagemProduto(body.nome.trim(), body.imagem || body.variants?.flatMap(v => v.imagens || [])[0]);
 
-    const produto = await Produto.create({
+    const produto = await salvarOferta({
       nome: body.nome.trim(),
       descricao: body.descricao || '',
       preco,
       precoPersonalizado,
       categoria: body.categoria || '',
       imagem,
-      disponivel: body.disponivel !== undefined ? body.disponivel : true
+      disponivel: body.disponivel !== undefined ? body.disponivel : true,
+      marca: body.marca || '',
+      cor: body.cor,
+      capacidade: body.capacidade,
+      estoque: body.estoque,
+      sku: body.sku,
+      specs: body.specs || {},
+      variants: body.variants || []
     });
 
     res.status(201).json({ sucesso: true, produto });
@@ -61,18 +71,33 @@ exports.criar = async (req, res) => {
 // ✅ LISTAR TODOS OS PRODUTOS
 exports.listar = async (req, res) => {
   try {
-    const produtos = await Produto.find().sort({ criadoEm: -1 });
-    res.json(produtos);
+    const produtos = await Produto.find().sort({ criadoEm: -1 }).lean();
+    res.json(filtrarProdutos(agruparProdutos(produtos), req.query));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
+// Mantém a lista administrativa completa, inclusive modelos indisponíveis.
+exports.listarAdministracao = async (req, res) => {
+  try {
+    const produtos = await Produto.find().sort({ criadoEm: -1 }).lean();
+    res.json(produtos.map(p => p.variants?.length ? { ...p, precoPersonalizado: resumirProduto(p).precoAPartir,
+      preco: Math.min(...p.variants.map(v => v.precoCusto || v.preco)) } : p));
+  }
+  catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.filtros = async (req, res) => {
+  try { res.json(listarFiltros(agruparProdutos(await Produto.find().lean()), req.query)); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+};
+
 // ✅ LISTAR SÓ DISPONÍVEIS (para o catálogo)
 exports.listarDisponiveis = async (req, res) => {
   try {
-    const produtos = await Produto.find({ disponivel: true });
-    res.json(produtos);
+    const produtos = await Produto.find().lean();
+    res.json(filtrarProdutos(agruparProdutos(produtos), req.query));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -81,10 +106,12 @@ exports.listarDisponiveis = async (req, res) => {
 // ✅ BUSCAR POR ID (NOVA!)
 exports.buscarPorId = async (req, res) => {
   try {
-    const produto = await Produto.findById(req.params.id);
+    const produtos = agruparProdutos(await Produto.find().lean());
+    const produto = produtos.find(p => String(p._id) === req.params.id || p.idsOriginais.some(id => String(id) === req.params.id) || p.variants.some(v => String(v.produtoLegadoId) === req.params.id));
     if (!produto) {
       return res.status(404).json({ sucesso: false, error: 'Produto não encontrado' });
     }
+    if (!produto.disponivel) return res.status(404).json({ sucesso: false, error: 'Produto indisponível' });
     res.json(produto);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -94,11 +121,8 @@ exports.buscarPorId = async (req, res) => {
 // ✅ BUSCAR POR CATEGORIA (NOVA!)
 exports.buscarPorCategoria = async (req, res) => {
   try {
-    const produtos = await Produto.find({ 
-      categoria: req.params.categoria,
-      disponivel: true 
-    });
-    res.json(produtos);
+    const produtos = agruparProdutos(await Produto.find().lean());
+    res.json(filtrarProdutos(produtos, { ...req.query, categoria: req.params.categoria }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -109,20 +133,33 @@ exports.atualizar = async (req, res) => {
   try {
     const body = req.body;
     const dadosAtualizar = {};
+    const atual = await Produto.findById(req.params.id);
+    if (!atual) return res.status(404).json({ sucesso: false, error: 'Produto não encontrado' });
+    if (atual.variants.length && !body.variants && (body.preco !== undefined || body.precoPersonalizado !== undefined)) {
+      return res.status(400).json({ sucesso: false, error: 'Este modelo tem variantes. Edite o preço de cada variante.' });
+    }
+    if (body.variants !== undefined) {
+      if (!Array.isArray(body.variants) || !body.variants.length) return res.status(400).json({ sucesso: false, error: 'Informe ao menos uma variante.' });
+      dadosAtualizar.variants = body.variants;
+      dadosAtualizar.preco = Math.min(...body.variants.map(v => Number(v.precoCusto || v.preco)));
+      dadosAtualizar.precoPersonalizado = Math.min(...body.variants.map(v => Number(v.preco)));
+    }
+    if (body.marca !== undefined) dadosAtualizar.marca = body.marca;
+    if (body.specs !== undefined) dadosAtualizar.specs = body.specs;
 
     if (body.nome !== undefined) {
       if (!body.nome.trim()) return res.status(400).json({ sucesso: false, error: 'Nome inválido' });
       dadosAtualizar.nome = body.nome.trim();
     }
     if (body.descricao !== undefined) dadosAtualizar.descricao = body.descricao;
-    if (body.preco !== undefined) {
+    if (body.preco !== undefined && !body.variants) {
       const preco = Number(body.preco);
       if (!Number.isFinite(preco) || preco <= 0) {
         return res.status(400).json({ sucesso: false, error: 'Preço inválido' });
       }
       dadosAtualizar.preco = preco;
     }
-    if (body.precoPersonalizado !== undefined) {
+    if (body.precoPersonalizado !== undefined && !body.variants) {
       if (body.precoPersonalizado === '' || body.precoPersonalizado === null) {
         dadosAtualizar.$unset = { precoPersonalizado: 1 };
       } else {
@@ -136,6 +173,7 @@ exports.atualizar = async (req, res) => {
     if (body.categoria !== undefined) dadosAtualizar.categoria = body.categoria;
     if (body.imagem !== undefined) dadosAtualizar.imagem = body.imagem;
     if (body.disponivel !== undefined) dadosAtualizar.disponivel = body.disponivel;
+    if (atual.variants.length || body.variants?.length) dadosAtualizar.chaveModelo = chaveDoModelo({ ...atual.toObject(), ...dadosAtualizar });
 
     const produto = await Produto.findByIdAndUpdate(
       req.params.id,
@@ -152,6 +190,21 @@ exports.atualizar = async (req, res) => {
     console.error("❌ Erro ao atualizar produto:", err);
     res.status(400).json({ sucesso: false, error: err.message });
   }
+};
+
+exports.atualizarVariante = async (req, res) => {
+  try {
+    const produto = await Produto.findById(req.params.id);
+    const variante = produto?.variants.id(req.params.variantId);
+    if (!variante) return res.status(404).json({ sucesso: false, error: 'Variante não encontrada' });
+    for (const campo of ['cor', 'capacidade', 'preco', 'precoCusto', 'estoque', 'sku', 'imagens', 'disponivel']) {
+      if (req.body[campo] !== undefined) variante[campo] = req.body[campo];
+    }
+    const resumo = resumirProduto(produto.toObject());
+    produto.precoPersonalizado = resumo.precoAPartir;
+    await produto.save();
+    res.json({ sucesso: true, produto });
+  } catch (err) { res.status(400).json({ sucesso: false, error: err.message }); }
 };
 
 // ✅ EXCLUIR PRODUTO
@@ -172,11 +225,10 @@ exports.excluir = async (req, res) => {
 
 exports.relatorio = async (req, res) => {
   try {
-    const [totalProdutos, disponiveis, importadosML] = await Promise.all([
-      Produto.countDocuments(),
-      Produto.countDocuments({ disponivel: true }),
-      Produto.countDocuments({ mlId: { $exists: true, $ne: '' } })
-    ]);
+    const produtos = agruparProdutos(await Produto.find().lean());
+    const totalProdutos = produtos.length;
+    const disponiveis = produtos.filter(p => p.disponivel).length;
+    const importadosML = produtos.filter(p => p.mlId || p.variants.some(v => v.mlId)).length;
     return res.json({ totalProdutos, disponiveis, indisponiveis: totalProdutos - disponiveis, importadosML });
   } catch (err) {
     return res.status(500).json({ error: 'Erro ao gerar relatório' });
@@ -216,7 +268,7 @@ exports.importarLote = async (req, res) => {
         }
 
         // Cria o produto
-        const produto = await Produto.create({
+        const produto = await salvarOferta({
           nome: p.nome.trim(),
           descricao: p.descricao || '',
           preco,

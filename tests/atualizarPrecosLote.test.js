@@ -6,6 +6,7 @@ test('updates only prices, skips missing and ambiguous names, rejects invalid an
   const updates = [];
   const Produto = {
     find(query) {
+      if (!query.nome) return { limit: async () => [] };
       const pattern = new RegExp(query.nome.$regex, query.nome.$options);
       const catalogo = [{ _id: '1', nome: 'Item (A)' }, { _id: '2', nome: 'Duplicado' }, { _id: '3', nome: 'Duplicado' }];
       return { limit: async () => catalogo.filter(p => pattern.test(p.nome)).slice(0, 2) };
@@ -44,4 +45,29 @@ test('updates sale price when provided and rejects empty lists', async () => {
   let status;
   await handler({ body: { produtos: [] } }, { status(value) { status = value; return this; }, json() {} });
   assert.equal(status, 400);
+});
+
+test('importação de preços encontra nome legado e altera somente a variante correspondente', async () => {
+  const { agruparProdutos } = require('../utils/variantes');
+  const { produtosMatriz } = require('./fixtures/variantes');
+  const [produto] = agruparProdutos(produtosMatriz());
+  const atualizacoes = [];
+  const model = {
+    find(query) {
+      const campo = query.nome ? 'nome' : 'variants.nomeLegado';
+      const filtro = query[campo];
+      const regex = new RegExp(filtro.$regex, filtro.$options);
+      return { limit: async () => (campo === 'nome' ? regex.test(produto.nome) : produto.variants.some(v => regex.test(v.nomeLegado))) ? [produto] : [] };
+    },
+    async findOneAndUpdate(query, update) { atualizacoes.push({ query, update }); return produto; }
+  };
+  let resposta;
+  await criarHandler(model)({ body: { produtos: [
+    { nome: 'iPhone 17 Pro Max 512GB Deep Blue', preco: 6800, precoPersonalizado: 8900 },
+    { nome: 'iPhone 17 Pro Max', preco: 200, precoPersonalizado: 300 }
+  ] } }, { json(data) { resposta = data; } });
+  assert.equal(atualizacoes.length, 1);
+  assert.equal(String(atualizacoes[0].query['variants._id']), String(produto.variants[4]._id));
+  assert.deepEqual(atualizacoes[0].update, { $set: { 'variants.$.precoCusto': 6800, 'variants.$.preco': 8900 } });
+  assert.equal(resposta.resultados.erros.length, 1);
 });

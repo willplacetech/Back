@@ -1,5 +1,6 @@
 const Pedido = require('../models/Pedido');
 const Produto = require('../models/Produto');
+const { validarItensPedido } = require('../utils/itensPedido');
 
 // ✅ CRIAR PEDIDO
 exports.criar = async (req, res) => {
@@ -10,32 +11,7 @@ exports.criar = async (req, res) => {
       return res.status(400).json({ sucesso: false, error: 'Itens, nome e telefone são obrigatórios' });
     }
 
-    const quantidades = new Map();
-    for (const item of itens) {
-      if (!item.produtoId || !Number.isInteger(item.quantidade) || item.quantidade < 1) {
-        return res.status(400).json({ sucesso: false, error: 'Item ou quantidade inválida' });
-      }
-      quantidades.set(String(item.produtoId), (quantidades.get(String(item.produtoId)) || 0) + item.quantidade);
-    }
-
-    const produtos = await Produto.find({
-      _id: { $in: [...quantidades.keys()] },
-      disponivel: true
-    }).lean();
-    if (produtos.length !== quantidades.size) {
-      return res.status(400).json({ sucesso: false, error: 'Um ou mais produtos não estão disponíveis' });
-    }
-
-    const itensValidados = produtos.map(produto => {
-      const preco = produto.precoPersonalizado || produto.preco;
-      return {
-        produtoId: produto._id,
-        nome: produto.nome,
-        preco,
-        quantidade: quantidades.get(String(produto._id)),
-        imagem: produto.imagem || ''
-      };
-    });
+    const itensValidados = validarItensPedido(await Produto.find().lean(), itens);
     const totalCalculado = itensValidados.reduce((soma, item) => soma + item.preco * item.quantidade, 0);
 
     const pedido = await Pedido.create({

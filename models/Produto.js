@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const ProductVariantSchema = require('./ProductVariant');
 
 // 1️⃣ PRIMEIRO define o Schema
 const ProdutoSchema = new mongoose.Schema({
@@ -13,6 +14,24 @@ const ProdutoSchema = new mongoose.Schema({
     default: '',
     maxlength: 600
   },
+  marca: { type: String, trim: true, default: '' },
+  chaveModelo: { type: String, unique: true, sparse: true },
+  specs: {
+    tela: { type: String, default: '' },
+    chip: { type: String, default: '' },
+    camera: { type: String, alias: 'specs.câmera', default: '' },
+    bateria: { type: String, default: '' }
+  },
+  variants: {
+    type: [ProductVariantSchema],
+    default: [],
+    validate: {
+      validator: variants => new Set(variants.map(v => v.sku)).size === variants.length &&
+        new Set(variants.map(v => `${v.cor.toLocaleLowerCase()}|${v.capacidade.toLocaleLowerCase()}`)).size === variants.length,
+      message: 'SKU e combinação de cor/capacidade devem ser únicos no modelo.'
+    }
+  },
+  categoriaOriginal: String,
   preco: {
     type: Number,
     required: true,
@@ -53,6 +72,8 @@ const ProdutoSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+ProdutoSchema.index({ 'variants.sku': 1 }, { unique: true, sparse: true });
 
 // 2️⃣ DEPOIS cria o Model
 module.exports = mongoose.model('Produto', ProdutoSchema);

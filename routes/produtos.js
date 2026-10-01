@@ -5,6 +5,7 @@ const axios = require('axios');
 const dns = require('dns').promises;
 const net = require('net');
 const Produto = require('../models/Produto');
+const { salvarOferta } = require('../utils/salvarOferta');
 const { buscarImagemProduto } = require('../utils/imagemSearch');
 const { normalizarPreco } = require('../utils/precoUtils');
 
@@ -97,7 +98,7 @@ router.post('/importar-fornecedor', requireAuth, async (req, res) => {
         // Preço final: R$500 + 7% = R$535
         const precoFinal = 500 * 1.07; // 535
 
-        const prod = await Produto.create({
+        const prod = await salvarOferta({
           nome: pd.nome.substring(0, 180),
           preco: pd.custo, // preço de custo armazenado
           precoPersonalizado: precoFinal, // preço final de venda
@@ -269,7 +270,7 @@ router.post('/importar-lote', requireAuth, async (req, res) => {
 
           const nomeNormalizado = p.nome.trim();
           const existente = atualizarExistentes
-            ? await Produto.findOne({ nome: { $regex: `^${nomeNormalizado.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } })
+            ? await Produto.findOne({ nome: { $regex: `^${nomeNormalizado.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, 'variants.0': { $exists: false } })
             : null;
           const descricaoWeb = !p.descricao && (!existente || !existente.descricao)
             ? await buscarDescricaoWeb(nomeNormalizado)
@@ -289,15 +290,20 @@ router.post('/importar-lote', requireAuth, async (req, res) => {
               ...(descricaoWeb && !existente.descricao ? { descricao: descricaoWeb } : {}),
               ...(imagemUrl && !existente.imagem ? { imagem: imagemUrl } : {})
             }, { new: true, runValidators: true })
-            : await Produto.create({
+            : await salvarOferta({
               nome: nomeNormalizado,
               descricao: p.descricao || descricaoWeb,
               preco,
               precoPersonalizado,
               categoria: p.categoria || 'Importado',
               imagem: imagemUrl,
-              disponivel: p.disponivel !== false
-            });
+              disponivel: p.disponivel !== false,
+              cor: p.cor,
+              capacidade: p.capacidade,
+              estoque: p.estoque,
+              sku: p.sku,
+              galeria: p.galeria
+            }, atualizarExistentes);
 
           resultados.sucesso.push({
             indice: i + idx,
@@ -330,14 +336,16 @@ router.post('/importar-lote', requireAuth, async (req, res) => {
 });
 
 // Rotas CRUD: as rotas específicas devem ficar antes de /:id.
-router.get('/', requireAuth, produtoController.listar);
+router.get('/', produtoController.listar);
+router.get('/administracao', requireAuth, produtoController.listarAdministracao);
 router.get('/disponiveis', produtoController.listarDisponiveis);
 router.get('/relatorio', requireAuth, produtoController.relatorio);
 router.get('/categoria/:categoria', produtoController.buscarPorCategoria);
-router.get('/:id', requireAuth, produtoController.buscarPorId);
+router.get('/:id', produtoController.buscarPorId);
 
 router.post('/', requireAuth, produtoController.criar);
 router.put('/:id', requireAuth, produtoController.atualizar);
+router.put('/:id/variants/:variantId', requireAuth, produtoController.atualizarVariante);
 router.delete('/:id', requireAuth, produtoController.excluir);
 
 module.exports = router;

@@ -3,6 +3,10 @@ const mongoose = require('mongoose');
 const PedidoSchema = new mongoose.Schema({
   itens: [{
     produtoId: { type: mongoose.Schema.Types.ObjectId, ref: 'Produto', required: true },
+    variantId: mongoose.Schema.Types.ObjectId,
+    sku: String,
+    cor: String,
+    capacidade: String,
     nome: String,
     preco: { type: Number, required: true, min: 0.01 },
     quantidade: { type: Number, required: true, min: 1, validate: Number.isInteger },

@@ -355,6 +355,7 @@ app.post('/api/produtos/processar-retentar/:sessaoId', async (req, res) => {
 // 🛣️ Rotas existentes mantidas
 app.use('/api/auth', authRoutes);
 app.use('/api/produtos', produtoRoutes);
+app.use('/api/filtros', require('./routes/filtros'));
 app.use('/api/pedidos', pedidoRoutes);
 app.use('/api/ml', mlRoutes);
 

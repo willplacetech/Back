@@ -6,4 +6,5 @@ yarn.lock
 *.log
 uploads/
 tmp/
+backups/
 .DS_Store

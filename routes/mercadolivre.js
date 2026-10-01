@@ -4,6 +4,7 @@ const axios = require('axios');
 const dns = require('dns').promises;
 const net = require('net');
 const Produto = require('../models/Produto');
+const { salvarOferta } = require('../utils/salvarOferta');
 const { requireAuth } = require('../middleware/auth');
 
 function ipPrivado(ip) {
@@ -154,10 +155,10 @@ router.post('/importar', requireAuth, async (req, res) => {
     }
 
     const idFinal = mlId || `MANUAL_${Date.now()}`;
-    const existe = await Produto.findOne({ mlId: idFinal });
+    const existe = await Produto.findOne({ $or: [{ mlId: idFinal }, { 'variants.mlId': idFinal }] });
     if (existe) return res.status(400).json({ error: '⚠️ Produto já importado!' });
 
-    const prod = await Produto.create({
+    const prod = await salvarOferta({
       mlId: idFinal,
       nome: nome.trim(),
       preco: Number(preco),
@@ -166,7 +167,7 @@ router.post('/importar', requireAuth, async (req, res) => {
       linkML: linkML || '',
       categoria: categoria || '',
       descricao: descricao || ''
-    });
+    }, false);
     
     console.log(`💾 ✅ PRODUTO SALVO: ${prod.nome} - R$ ${prod.preco.toFixed(2)}`);
     res.status(201).json(prod);
