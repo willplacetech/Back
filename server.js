@@ -11,6 +11,8 @@ const pedidoRoutes = require('./routes/pedidos');
 const mlRoutes = require('./routes/mercadolivre');
 const authRoutes = require('./routes/auth');
 const SessaoProcessamento = require('./models/SessaoProcessamento');
+const { requireAuth } = require('./middleware/auth');
+const { validarOpenAI, completarOpenAI } = require('./utils/openaiLista');
 
 const app = express();
 
@@ -75,8 +77,9 @@ function dividirListaEmLotes(texto) {
 }
 
 // ✅ PROCESSA UM LOTE COM GROQ
-async function processarUmLote(loteTexto, contexto) {
-  garantirGroqDisponivel();
+async function processarUmLote(loteTexto, contexto, sessao, apiKey) {
+  const openai = sessao.provedorIa === 'openai';
+  if (!openai) garantirGroqDisponivel();
 
   const prompt = `
 Categoria atual: ${contexto || 'Geral'}
@@ -91,7 +94,7 @@ Lista de produtos:
 ${loteTexto}
 `;
 
-  const chatCompletion = await groq.chat.completions.create({
+  const payload = {
     messages: [
       {
         role: 'system',
@@ -99,11 +102,13 @@ ${loteTexto}
       },
       { role: 'user', content: prompt }
     ],
-    model: CONFIG.MODELO,
-    temperature: CONFIG.TEMPERATURA,
+    model: openai ? sessao.modeloIa : CONFIG.MODELO,
+    ...(openai ? { max_completion_tokens: CONFIG.MAX_TOKENS } : { temperature: CONFIG.TEMPERATURA, max_tokens: CONFIG.MAX_TOKENS }),
     response_format: { type: 'json_object' },
-    max_tokens: CONFIG.MAX_TOKENS
-  });
+  };
+  const chatCompletion = openai
+    ? await completarOpenAI(payload, apiKey)
+    : await groq.chat.completions.create(payload);
 
   const textoResposta = chatCompletion.choices[0]?.message?.content?.trim() || '{}';
   return JSON.parse(textoResposta);
@@ -121,9 +126,17 @@ function extrairProdutos(dadosLote) {
 }
 
 // 🔌 ROTA 1: INICIAR NOVA SESSÃO
-app.post('/api/produtos/processar-iniciar', async (req, res) => {
+app.post('/api/produtos/processar-iniciar', requireAuth, async (req, res) => {
   try {
     const { listaBruta } = req.body;
+    const { provedorIa = 'groq', modeloIa, nomeInstanciaIa, apiKey } = req.body;
+    try {
+      if (!['groq', 'openai'].includes(provedorIa)) throw new Error('Provedor de IA inválido.');
+      if (provedorIa === 'openai') validarOpenAI(apiKey, modeloIa);
+      else garantirGroqDisponivel();
+    } catch (erro) {
+      return res.status(400).json({ sucesso: false, erro: erro.message });
+    }
     if (!listaBruta || listaBruta.trim().length === 0) {
       return res.status(400).json({ sucesso: false, erro: 'Lista vazia' });
     }
@@ -132,6 +145,9 @@ app.post('/api/produtos/processar-iniciar', async (req, res) => {
     const sessao = await SessaoProcessamento.create({
       status: 'iniciada',
       listaBruta,
+      provedorIa,
+      modeloIa: provedorIa === 'openai' ? modeloIa : CONFIG.MODELO,
+      nomeInstanciaIa: typeof nomeInstanciaIa === 'string' ? nomeInstanciaIa.slice(0, 100) : '',
       totalLotes: lotesDados.length,
       lotes: lotesDados.map((_, i) => ({ indice: i, status: 'pendente' })),
       produtos: [],
@@ -148,7 +164,7 @@ app.post('/api/produtos/processar-iniciar', async (req, res) => {
 });
 
 // 🔌 ROTA 2: PROCESSAR PRÓXIMO LOTE
-app.post('/api/produtos/processar-proximo/:sessaoId', async (req, res) => {
+app.post('/api/produtos/processar-proximo/:sessaoId', requireAuth, async (req, res) => {
   try {
     const { sessaoId } = req.params;
     let sessao = await SessaoProcessamento.findById(sessaoId);
@@ -178,6 +194,10 @@ app.post('/api/produtos/processar-proximo/:sessaoId', async (req, res) => {
       });
     }
 
+    if (sessao.provedorIa === 'openai') {
+      try { validarOpenAI(req.body?.apiKey, sessao.modeloIa); }
+      catch (erro) { return res.status(400).json({ sucesso: false, erro: erro.message }); }
+    }
     const lote = sessao.lotes[loteIndex];
     const lotesDados = dividirListaEmLotes(sessao.listaBruta);
     const dadosLote = lotesDados[loteIndex];
@@ -192,7 +212,7 @@ app.post('/api/produtos/processar-proximo/:sessaoId', async (req, res) => {
     console.log(`🔄 Sessão ${sessaoId} | Lote ${loteIndex + 1}/${sessao.totalLotes} | Tentativa ${lote.tentativas}`);
 
     try {
-      const resultado = await processarUmLote(dadosLote.conteudo, dadosLote.categoriaContexto);
+      const resultado = await processarUmLote(dadosLote.conteudo, dadosLote.categoriaContexto, sessao, req.body?.apiKey);
       const produtosNovos = extrairProdutos(resultado);
 
       lote.status = 'concluido';

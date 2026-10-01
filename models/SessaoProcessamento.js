@@ -21,6 +21,9 @@ const sessaoSchema = new mongoose.Schema({
     default: 'iniciada'
   },
   listaBruta: { type: String, required: true },
+  provedorIa: { type: String, enum: ['groq', 'openai'], default: 'groq' },
+  modeloIa: String,
+  nomeInstanciaIa: String,
   totalLotes: { type: Number, default: 0 },
   lotesConcluidos: { type: Number, default: 0 },
   lotesFalhos: { type: Number, default: 0 },
