@@ -230,6 +230,7 @@ async function buscarDescricaoWeb(nomeProduto) {
 // 📦 IMPORTAR PRODUTOS EM LOTE
 // ==========================================
 const produtoController = require('../controllers/produtoController');
+router.post('/atualizar-precos-lote', requireAuth, require('../controllers/atualizarPrecosLote')(Produto));
 
 router.post('/importar-lote', requireAuth, async (req, res) => {
   try {
