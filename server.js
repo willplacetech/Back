@@ -358,6 +358,7 @@ app.use('/api/produtos', produtoRoutes);
 app.use('/api/filtros', require('./routes/filtros'));
 app.use('/api/pedidos', pedidoRoutes);
 app.use('/api/ml', mlRoutes);
+app.use('/api/troca', require('./routes/tradein'));
 
 // 🧪 Rota de teste
 app.get('/api', (req, res) => {
