@@ -1,6 +1,7 @@
 const Pedido = require('../models/Pedido');
 const Produto = require('../models/Produto');
 const { validarItensPedido } = require('../utils/itensPedido');
+const { carregarAcessivel } = require('./tradeInController');
 
 // ✅ CRIAR PEDIDO
 exports.criar = async (req, res) => {
@@ -13,22 +14,35 @@ exports.criar = async (req, res) => {
 
     const itensValidados = validarItensPedido(await Produto.find().lean(), itens);
     const totalCalculado = itensValidados.reduce((soma, item) => soma + item.preco * item.quantidade, 0);
+    let troca = null;
+    let valorTroca = 0;
+    if (req.body.tradeInId) {
+      troca = await carregarAcessivel(req, req.body.tradeInId);
+      if (['rejeitado', 'concluido'].includes(troca.status)) {
+        return res.status(400).json({ sucesso: false, error: 'Esta troca não está disponível para um novo pedido.' });
+      }
+      if (troca.status === 'aprovado' && Number.isFinite(troca.valorOferta)) {
+        valorTroca = Math.min(totalCalculado, Math.max(0, troca.valorOferta));
+      }
+    }
 
     const pedido = await Pedido.create({
       itens: itensValidados,
+      tradeInId: troca?._id || null,
+      valorTroca: Number(valorTroca.toFixed(2)),
       dadosCliente: {
         nome: dadosCliente.nome.trim(),
         telefone: dadosCliente.telefone.trim(),
         endereco: String(dadosCliente.endereco || '').trim()
       },
-      total: Number(totalCalculado.toFixed(2)),
+      total: Number((totalCalculado - valorTroca).toFixed(2)),
       status: 'pendente'
     });
 
     res.status(201).json({ sucesso: true, pedido });
   } catch (err) {
     console.error("❌ Erro ao criar pedido:", err);
-    res.status(400).json({ sucesso: false, error: err.message });
+    res.status(err.status || 400).json({ sucesso: false, error: err.message });
   }
 };
 

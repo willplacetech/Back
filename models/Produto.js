@@ -20,7 +20,8 @@ const ProdutoSchema = new mongoose.Schema({
     tela: { type: String, default: '' },
     chip: { type: String, default: '' },
     camera: { type: String, alias: 'specs.câmera', default: '' },
-    bateria: { type: String, default: '' }
+    bateria: { type: String, default: '' },
+    '5g': { type: Boolean, default: null }
   },
   variants: {
     type: [ProductVariantSchema],

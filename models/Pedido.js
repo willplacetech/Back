@@ -12,7 +12,9 @@ const PedidoSchema = new mongoose.Schema({
     quantidade: { type: Number, required: true, min: 1, validate: Number.isInteger },
     imagem: String
   }],
-  total: { type: Number, required: true, min: 0.01 },
+  tradeInId: { type: mongoose.Schema.Types.ObjectId, ref: 'TradeIn', default: null },
+  valorTroca: { type: Number, default: 0, min: 0 },
+  total: { type: Number, required: true, min: 0 },
   dadosCliente: {
     nome: { type: String, required: true, trim: true, maxlength: 120 },
     telefone: { type: String, required: true, trim: true, maxlength: 25 },

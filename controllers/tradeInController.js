@@ -20,9 +20,9 @@ function podeConsultar(solicitacao, req) {
   return recebido.length === salvo.length && crypto.timingSafeEqual(recebido, salvo);
 }
 
-async function carregarAcessivel(req) {
-  if (!mongoose.isObjectIdOrHexString(req.params.id)) throw erroHttp(400, 'ID de solicitação inválido');
-  const solicitacao = await TradeIn.findById(req.params.id).select('+acessoTokenHash');
+async function carregarAcessivel(req, id = req.params.id) {
+  if (!mongoose.isObjectIdOrHexString(id)) throw erroHttp(400, 'ID de solicitação inválido');
+  const solicitacao = await TradeIn.findById(id).select('+acessoTokenHash');
   if (!solicitacao || !podeConsultar(solicitacao, req)) throw erroHttp(404, 'Solicitação não encontrada');
   return solicitacao;
 }
