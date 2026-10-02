@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const TradeIn = require('../models/TradeIn');
 const { isAdmin } = require('../middleware/auth');
 const cloudinaryTroca = require('../utils/cloudinaryTroca');
+const { trocasCsv } = require('../utils/trocasCsv');
 
 const STATUS = ['pendente', 'em_avaliacao', 'aprovado', 'rejeitado', 'concluido'];
 const hashToken = token => crypto.createHash('sha256').update(token).digest('hex');
@@ -33,6 +34,13 @@ function responderErro(res, erro) {
     return res.status(400).json({ sucesso: false, error: erro.message });
   }
   return res.status(erro.status || 500).json({ sucesso: false, error: erro.status ? erro.message : 'Não foi possível processar a solicitação de troca' });
+}
+
+function dadosPublicos(solicitacao) {
+  const dados = solicitacao.toObject ? solicitacao.toObject() : { ...solicitacao };
+  delete dados.acessoTokenHash;
+  delete dados.cloudinaryAssets;
+  return dados;
 }
 
 exports.criar = async (req, res) => {
@@ -76,7 +84,7 @@ exports.criar = async (req, res) => {
 exports.listarMinhas = async (req, res) => {
   try {
     const solicitacoes = await TradeIn.find({ userId: req.user._id }).sort({ createdAt: -1 });
-    res.json(solicitacoes);
+    res.json(solicitacoes.map(dadosPublicos));
   } catch (erro) { responderErro(res, erro); }
 };
 
@@ -84,17 +92,24 @@ exports.listarAdmin = async (req, res) => {
   try {
     const { status } = req.query;
     if (status !== undefined && !STATUS.includes(status)) throw erroHttp(400, 'Status inválido');
-    res.json(await TradeIn.find(status ? { status } : {}).sort({ createdAt: -1 }));
+    res.json((await TradeIn.find(status ? { status } : {}).sort({ createdAt: -1 })).map(dadosPublicos));
   } catch (erro) { responderErro(res, erro); }
 };
 
 exports.buscarPorId = async (req, res) => {
   try {
     const solicitacao = await carregarAcessivel(req);
-    const dados = solicitacao.toObject();
-    delete dados.acessoTokenHash;
-    delete dados.cloudinaryAssets;
-    res.json(dados);
+    res.json(dadosPublicos(solicitacao));
+  } catch (erro) { responderErro(res, erro); }
+};
+
+exports.exportarCsv = async (req, res) => {
+  try {
+    const { status } = req.query;
+    if (status !== undefined && !STATUS.includes(status)) throw erroHttp(400, 'Status inválido');
+    const trocas = await TradeIn.find(status ? { status } : {}).sort({ createdAt: -1 });
+    res.set('Content-Disposition', 'attachment; filename="trocas.csv"');
+    res.type('text/csv; charset=utf-8').send(trocasCsv(trocas));
   } catch (erro) { responderErro(res, erro); }
 };
 
@@ -116,9 +131,12 @@ exports.atualizarStatus = async (req, res) => {
     if (status === 'rejeitado' && !campos.motivoRejeicao) throw erroHttp(400, 'Informe motivoRejeicao para rejeitar a solicitação');
     if (status === 'aprovado') campos.motivoRejeicao = '';
     if (status === 'rejeitado') campos.valorOferta = null;
-    const solicitacao = await TradeIn.findByIdAndUpdate(req.params.id, { $set: campos }, { new: true, runValidators: true });
+    if (['pendente', 'em_avaliacao'].includes(status)) { campos.valorOferta = null; campos.motivoRejeicao = ''; }
+    const evento = { status, data: new Date(), valorOferta: status === 'aprovado' ? campos.valorOferta : null,
+      motivoRejeicao: status === 'rejeitado' ? campos.motivoRejeicao : '' };
+    const solicitacao = await TradeIn.findByIdAndUpdate(req.params.id, { $set: campos, $push: { historico: evento } }, { new: true, runValidators: true });
     if (!solicitacao) throw erroHttp(404, 'Solicitação não encontrada');
-    res.json({ sucesso: true, solicitacao });
+    res.json({ sucesso: true, solicitacao: dadosPublicos(solicitacao) });
   } catch (erro) { responderErro(res, erro); }
 };
 

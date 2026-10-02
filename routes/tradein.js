@@ -9,6 +9,8 @@ router.post('/', optionalAuth, resolverTrocaUser, uploadTroca, ctrl.criar);
 // Rotas fixas precisam preceder /:id.
 router.get('/mid', requireAuth, resolverTrocaUser, requireTrocaUser, ctrl.listarMinhas);
 router.get('/admin', requireAdmin, ctrl.listarAdmin);
+router.get('/admin/exportar', requireAdmin, ctrl.exportarCsv);
+router.get('/admin/:id', requireAdmin, ctrl.buscarPorId);
 router.patch('/:id/status', requireAdmin, ctrl.atualizarStatus);
 router.get('/:id', optionalAuth, resolverTrocaUser, ctrl.buscarPorId);
 

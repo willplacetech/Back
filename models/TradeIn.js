@@ -33,6 +33,16 @@ const TradeInSchema = new mongoose.Schema({
   },
   valorOferta: { type: Number, min: 0, default: null, validate: valor => valor === null || Number.isFinite(valor) },
   motivoRejeicao: { type: String, trim: true, maxlength: 2000, default: '' },
+  historico: {
+    type: [{
+      _id: false,
+      status: { type: String, enum: ['pendente', 'em_avaliacao', 'aprovado', 'rejeitado', 'concluido'], required: true },
+      data: { type: Date, required: true },
+      valorOferta: { type: Number, default: null, min: 0 },
+      motivoRejeicao: { type: String, default: '', maxlength: 2000 }
+    }],
+    default: () => [{ status: 'pendente', data: new Date() }]
+  },
   // Permite acompanhar uma solicitação sem conta, sem expor dados apenas pelo ID.
   acessoTokenHash: { type: String, select: false }
   ,cloudinaryAssets: { type: [{ campo: String, publicId: String, _id: false }], select: false }
