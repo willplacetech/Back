@@ -66,7 +66,7 @@ exports.criar = async (req, res) => {
     if (req.aborted || res.destroyed) throw erroHttp(400, 'Envio interrompido');
     await solicitacao.save();
     salvo = true;
-    res.status(201).json({ sucesso: true, id: solicitacao._id, status: solicitacao.status, ...(acessoToken ? { acessoToken } : {}) });
+    res.status(201).json({ sucesso: true, id: solicitacao._id, protocolo: String(solicitacao._id), status: solicitacao.status, ...(acessoToken ? { acessoToken } : {}) });
   } catch (erro) {
     if (!salvo && assets.length) await cloudinaryTroca.excluirFotos(assets);
     responderErro(res, erro);
