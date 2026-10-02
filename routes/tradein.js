@@ -7,6 +7,8 @@ const router = express.Router();
 
 router.post('/', optionalAuth, resolverTrocaUser, uploadTroca, ctrl.criar);
 // Rotas fixas precisam preceder /:id.
+router.get('/configuracoes', ctrl.obterConfiguracoes);
+router.put('/configuracoes', requireAdmin, ctrl.atualizarConfiguracoes);
 router.get('/mid', requireAuth, resolverTrocaUser, requireTrocaUser, ctrl.listarMinhas);
 router.get('/admin', requireAdmin, ctrl.listarAdmin);
 router.get('/admin/exportar', requireAdmin, ctrl.exportarCsv);

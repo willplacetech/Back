@@ -26,7 +26,7 @@ const TradeInSchema = new mongoose.Schema({
   },
   descricaoEstado: { type: String, trim: true, maxlength: 4000, default: '' },
   fotos: {
-    frontal: foto(), superior: foto(), inferior: foto(), lateralEsq: foto(), lateralDir: foto()
+    frontal: foto(), superior: foto(), inferior: foto(), lateralEsq: foto(), lateralDir: foto(), traseira: foto()
   },
   status: {
     type: String, enum: ['pendente', 'em_avaliacao', 'aprovado', 'rejeitado', 'concluido'], default: 'pendente'

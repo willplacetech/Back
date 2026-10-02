@@ -8,7 +8,7 @@ const dadosValidos = () => ({
   nome: 'Cliente teste', email: 'CLIENTE@example.com', telefone: '11999999999',
   modeloAparelho: 'iPhone 15', capacidade: '256GB', cor: 'Preto', imei: '490154203237518',
   descricaoEstado: 'Sem avarias',
-  fotos: Object.fromEntries(['frontal', 'superior', 'inferior', 'lateralEsq', 'lateralDir'].map(campo => [campo, `https://example.com/${campo}.jpg`]))
+  fotos: Object.fromEntries(['frontal', 'traseira', 'superior', 'inferior', 'lateralEsq', 'lateralDir'].map(campo => [campo, `https://example.com/${campo}.jpg`]))
 });
 
 test('IMEI exige 15 dígitos e checksum Luhn correto', () => {
@@ -19,7 +19,7 @@ test('IMEI exige 15 dígitos e checksum Luhn correto', () => {
   }
 });
 
-test('schema valida contato de visitante, cinco URLs, status e índice único', async () => {
+test('schema valida contato de visitante, seis URLs, status e índice único', async () => {
   const troca = new TradeIn(dadosValidos());
   await troca.validate();
   assert.equal(troca.userId, null);
@@ -32,8 +32,8 @@ test('schema valida contato de visitante, cinco URLs, status e índice único', 
   const comUser = new TradeIn({ ...dadosValidos(), userId: new mongoose.Types.ObjectId(), nome: undefined, email: undefined, telefone: undefined });
   await comUser.validate();
   const semFoto = new TradeIn(dadosValidos());
-  semFoto.fotos.frontal = undefined;
-  await assert.rejects(semFoto.validate(), erro => Boolean(erro.errors['fotos.frontal']));
+  semFoto.fotos.traseira = undefined;
+  await assert.rejects(semFoto.validate(), erro => Boolean(erro.errors['fotos.traseira']));
   const base64 = new TradeIn(dadosValidos());
   base64.fotos.frontal = 'data:image/png;base64,AAAA';
   await assert.rejects(base64.validate(), erro => Boolean(erro.errors['fotos.frontal']));

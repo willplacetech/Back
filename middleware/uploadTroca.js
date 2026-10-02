@@ -1,6 +1,6 @@
 const multer = require('multer');
 
-const CAMPOS_FOTOS = ['frontal', 'superior', 'inferior', 'lateralEsq', 'lateralDir'];
+const CAMPOS_FOTOS = ['frontal', 'superior', 'inferior', 'lateralEsq', 'lateralDir', 'traseira'];
 const TIPOS = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const LIMITE_FOTO = 5 * 1024 * 1024;
 
@@ -22,7 +22,7 @@ const receber = multer({
 }).fields(CAMPOS_FOTOS.map(name => ({ name, maxCount: 1 })));
 
 function uploadTroca(req, res, next) {
-  if (!req.is('multipart/form-data')) return res.status(415).json({ sucesso: false, error: 'Envie multipart/form-data com as cinco fotos' });
+  if (!req.is('multipart/form-data')) return res.status(415).json({ sucesso: false, error: 'Envie multipart/form-data com as seis fotos' });
   receber(req, res, erro => {
     if (erro) {
       const mensagem = erro.code === 'LIMIT_FILE_SIZE' ? 'Cada foto deve ter no máximo 5 MB'
@@ -30,7 +30,7 @@ function uploadTroca(req, res, next) {
           : erro.status ? erro.message : 'Não foi possível receber as fotos';
       return res.status(erro.code === 'LIMIT_FILE_SIZE' ? 413 : erro.status || 400).json({ sucesso: false, error: mensagem });
     }
-    if (CAMPOS_FOTOS.some(campo => !req.files?.[campo]?.[0])) return res.status(400).json({ sucesso: false, error: `Envie as cinco fotos: ${CAMPOS_FOTOS.join(', ')}` });
+    if (CAMPOS_FOTOS.some(campo => !req.files?.[campo]?.[0])) return res.status(400).json({ sucesso: false, error: `Envie as seis fotos: ${CAMPOS_FOTOS.join(', ')}` });
     for (const campo of CAMPOS_FOTOS) {
       const file = req.files[campo][0];
       if (!assinaturaValida(file.buffer, file.mimetype)) return res.status(415).json({ sucesso: false, error: `A foto ${campo} não corresponde ao formato informado` });

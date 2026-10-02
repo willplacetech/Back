@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const TradeIn = require('../models/TradeIn');
+const ConfiguracaoTroca = require('../models/ConfiguracaoTroca');
 const { isAdmin } = require('../middleware/auth');
 const cloudinaryTroca = require('../utils/cloudinaryTroca');
 const { trocasCsv } = require('../utils/trocasCsv');
@@ -111,6 +112,34 @@ exports.exportarCsv = async (req, res) => {
     const trocas = await TradeIn.find(status ? { status } : {}).sort({ createdAt: -1 });
     res.set('Content-Disposition', 'attachment; filename="trocas.csv"');
     res.type('text/csv; charset=utf-8').send(trocasCsv(trocas));
+  } catch (erro) { responderErro(res, erro); }
+};
+
+exports.obterConfiguracoes = async (req, res) => {
+  try {
+    const configuracao = await ConfiguracaoTroca.findOne({ chave: 'troca' }).lean();
+    res.json({ checklist: configuracao?.checklist || [] });
+  } catch (erro) { responderErro(res, erro); }
+};
+
+exports.atualizarConfiguracoes = async (req, res) => {
+  try {
+    const { checklist } = req.body || {};
+    if (!Array.isArray(checklist) || checklist.length > 30 ||
+      checklist.some(item => typeof item !== 'string' || !item.trim() || item.trim().length > 200)) {
+      throw erroHttp(400, 'Informe até 30 itens de checklist, cada um com 1 a 200 caracteres.');
+    }
+    const itens = checklist.map(item => item.trim());
+    const normalizados = itens.map(item => item.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/\s+/g, ' '));
+    if (new Set(normalizados).size !== normalizados.length) {
+      throw erroHttp(400, 'O checklist não pode conter itens duplicados.');
+    }
+    const configuracao = await ConfiguracaoTroca.findOneAndUpdate(
+      { chave: 'troca' },
+      { $set: { checklist: itens }, $setOnInsert: { chave: 'troca' } },
+      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+    ).lean();
+    res.json({ sucesso: true, checklist: configuracao.checklist });
   } catch (erro) { responderErro(res, erro); }
 };
 
