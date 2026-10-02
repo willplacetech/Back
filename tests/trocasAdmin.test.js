@@ -12,7 +12,8 @@ test('admin filtra, exporta CSV seguro e registra decisões visíveis somente ao
     _id: new mongoose.Types.ObjectId(), userId, nome: '=HYPERLINK("teste")', email: 'cliente@example.com', telefone: '11999999999',
     modeloAparelho: 'iPhone 15', capacidade: '128GB', cor: 'Preto', imei: '490154203237518',
     descricaoEstado: 'Sem riscos', fotos: Object.fromEntries(['frontal', 'superior', 'inferior', 'lateralEsq', 'lateralDir'].map(c => [c, `https://example.com/${c}.jpg`])),
-    createdAt: new Date('2026-10-02T10:00:00Z'), acessoTokenHash: 'privado'
+    createdAt: new Date('2026-10-02T10:00:00Z'), acessoTokenHash: 'privado',
+    historico: [{ status: 'pendente', data: new Date('2026-10-02T10:00:00Z') }]
   });
   t.mock.method(User, 'findById', id => ({ lean: async () => ({ _id: id, ativo: true, nome: 'Cliente', email: 'cliente@example.com' }) }));
   t.mock.method(TradeIn, 'find', filtro => ({ sort: async () =>

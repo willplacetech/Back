@@ -24,4 +24,10 @@ const PedidoSchema = new mongoose.Schema({
   criadoEm: { type: Date, default: Date.now }
 });
 
+// A mesma troca só financia um pedido ativo, inclusive com requisições simultâneas.
+PedidoSchema.index({ tradeInId: 1 }, {
+  name: 'troca_pedido_ativo_unico', unique: true,
+  partialFilterExpression: { tradeInId: { $type: 'objectId' }, status: { $in: ['pendente', 'confirmado', 'entregue'] } }
+});
+
 module.exports = mongoose.model('Pedido', PedidoSchema);

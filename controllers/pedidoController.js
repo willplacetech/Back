@@ -21,6 +21,9 @@ exports.criar = async (req, res) => {
       if (['rejeitado', 'concluido'].includes(troca.status)) {
         return res.status(400).json({ sucesso: false, error: 'Esta troca não está disponível para um novo pedido.' });
       }
+      if (await Pedido.exists({ tradeInId: troca._id, status: { $in: ['pendente', 'confirmado', 'entregue'] } })) {
+        return res.status(409).json({ sucesso: false, error: 'Esta troca já está associada a outro pedido ativo.' });
+      }
       if (troca.status === 'aprovado' && Number.isFinite(troca.valorOferta)) {
         valorTroca = Math.min(totalCalculado, Math.max(0, troca.valorOferta));
       }
@@ -41,6 +44,7 @@ exports.criar = async (req, res) => {
 
     res.status(201).json({ sucesso: true, pedido });
   } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ sucesso: false, error: 'Esta troca já está associada a outro pedido ativo.' });
     console.error("❌ Erro ao criar pedido:", err);
     res.status(err.status || 400).json({ sucesso: false, error: err.message });
   }
@@ -72,6 +76,7 @@ exports.atualizarStatus = async (req, res) => {
     if (!pedido) return res.status(404).json({ sucesso: false, error: 'Pedido não encontrado' });
     res.json({ sucesso: true, pedido });
   } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ sucesso: false, error: 'Esta troca já está associada a outro pedido ativo.' });
     res.status(400).json({ sucesso: false, error: err.message });
   }
 };

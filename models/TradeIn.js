@@ -41,7 +41,7 @@ const TradeInSchema = new mongoose.Schema({
       valorOferta: { type: Number, default: null, min: 0 },
       motivoRejeicao: { type: String, default: '', maxlength: 2000 }
     }],
-    default: () => [{ status: 'pendente', data: new Date() }]
+    default: []
   },
   // Permite acompanhar uma solicitação sem conta, sem expor dados apenas pelo ID.
   acessoTokenHash: { type: String, select: false }

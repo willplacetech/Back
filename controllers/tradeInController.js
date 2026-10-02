@@ -61,6 +61,7 @@ exports.criar = async (req, res) => {
       cor: body.cor,
       imei: body.imei,
       descricaoEstado: body.descricaoEstado,
+      historico: [{ status: 'pendente', data: new Date() }],
       ...(acessoToken ? { acessoTokenHash: hashToken(acessoToken) } : {})
     });
     // Valida os campos antes de gastar uploads; as fotos são validadas no save.

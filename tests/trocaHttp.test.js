@@ -57,6 +57,8 @@ test('HTTP troca: perfil autenticado, upload completo, protocolo, pendência e v
   assert.match(troca.acessoToken, /^[a-f0-9]{64}$/);
   assert.equal(salvos[0].userId, null);
   assert.equal(salvos[0].nome, 'Cliente visitante');
+  assert.equal(salvos[0].historico[0].status, 'pendente');
+  assert.ok(salvos[0].historico[0].data instanceof Date);
   assert.equal(subir.mock.callCount(), 1);
 
   const logado = await fetch(`${base}/troca`, { method: 'POST', headers, body: corpo({ nome: undefined, email: undefined, telefone: undefined }) });
